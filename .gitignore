@@ -1,0 +1,39 @@
+# Build output
+target/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+
+# Logs
+*.log
+server.log
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+application-local.yml
+application-local.properties
+
+# Temporary files
+*.tmp
+*.bak
+
+# Claude Code
+.claude/
