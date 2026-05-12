@@ -3,11 +3,20 @@ package com.shop.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.shop.common.Result;
 import com.shop.dto.ProductRequest;
+import com.shop.exception.BusinessException;
 import com.shop.model.Product;
 import com.shop.service.ProductService;
-import org.springframework.web.bind.annotation.*;
-
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
 import java.util.List;
 
 @RestController
@@ -22,72 +31,45 @@ public class ProductController {
 
     @PostMapping
     public Result<Product> createProduct(@Valid @RequestBody ProductRequest productRequest) {
-        Product product = new Product();
-        product.setName(productRequest.getName());
-        product.setDescription(productRequest.getDescription());
-        product.setPrice(productRequest.getPrice());
-        product.setStock(productRequest.getStock());
-        product.setCategory(productRequest.getCategory());
-
-        Product createdProduct = productService.createProduct(product);
-        return Result.success(createdProduct);
+        return Result.success(productService.createProduct(toProduct(productRequest)));
     }
 
     @GetMapping("/{id}")
     public Result<Product> getProduct(@PathVariable String id) {
         Product product = productService.getProductById(id);
         if (product == null) {
-            return Result.error(404, "商品不存在");
+            throw BusinessException.notFound("Product not found");
         }
         return Result.success(product);
     }
 
     @GetMapping
     public Result<List<Product>> getAllProducts() {
-        List<Product> products = productService.getAllProducts();
-        return Result.success(products);
+        return Result.success(productService.getAllProducts());
     }
 
     @GetMapping("/hot")
     public Result<List<Product>> getHotProducts() {
-        List<Product> hotProducts = productService.getHotProducts();
-        return Result.success(hotProducts);
+        return Result.success(productService.getHotProducts());
     }
 
     @GetMapping("/search")
     public Result<List<Product>> searchProducts(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String category) {
-        List<Product> products = productService.searchProducts(keyword, category);
-        return Result.success(products);
+        return Result.success(productService.searchProducts(keyword, category));
     }
 
     @PutMapping("/{id}")
-    public Result<Product> updateProduct(
-            @PathVariable String id,
-            @Valid @RequestBody ProductRequest productRequest) {
-        Product existingProduct = productService.getProductById(id);
-        if (existingProduct == null) {
-            return Result.error(404, "商品不存在，无法更新");
-        }
-
-        existingProduct.setName(productRequest.getName());
-        existingProduct.setDescription(productRequest.getDescription());
-        existingProduct.setPrice(productRequest.getPrice());
-        existingProduct.setStock(productRequest.getStock());
-        existingProduct.setCategory(productRequest.getCategory());
-
-        Product updatedProduct = productService.updateProduct(id, existingProduct);
-        return Result.success(updatedProduct);
+    public Result<Product> updateProduct(@PathVariable String id, @Valid @RequestBody ProductRequest productRequest) {
+        return Result.success(productService.updateProduct(id, toProduct(productRequest)));
     }
 
     @DeleteMapping("/{id}")
     public Result<Void> deleteProduct(@PathVariable String id) {
-        if (productService.getProductById(id) == null) {
-            return Result.error(404, "商品不存在，无法删除");
+        if (!productService.deleteProduct(id)) {
+            throw BusinessException.notFound("Product not found");
         }
-
-        productService.deleteProduct(id);
         return Result.success();
     }
 
@@ -95,8 +77,16 @@ public class ProductController {
     public Result<Page<Product>> getProductsPage(
             @RequestParam(defaultValue = "1") int pageNum,
             @RequestParam(defaultValue = "10") int pageSize) {
+        return Result.success(productService.getProductsByPage(pageNum, pageSize));
+    }
 
-        Page<Product> pageResult = productService.getProductsByPage(pageNum, pageSize);
-        return Result.success(pageResult);
+    private Product toProduct(ProductRequest productRequest) {
+        Product product = new Product();
+        product.setName(productRequest.getName());
+        product.setDescription(productRequest.getDescription());
+        product.setPrice(productRequest.getPrice());
+        product.setStock(productRequest.getStock());
+        product.setCategory(productRequest.getCategory());
+        return product;
     }
 }

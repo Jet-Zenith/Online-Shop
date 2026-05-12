@@ -1,6 +1,7 @@
 package com.shop.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.shop.exception.BusinessException;
 import com.shop.mapper.ProductMapper;
 import com.shop.model.Product;
 import org.apache.commons.lang3.StringUtils;
@@ -29,6 +30,7 @@ public class ProductService {
     }
 
     public Product createProduct(Product product) {
+        normalize(product);
         productMapper.insert(product);
         redisTemplate.opsForValue().set(PRODUCT_KEY_PREFIX + product.getId(), product, PRODUCT_CACHE_TTL_HOURS, TimeUnit.HOURS);
         evictListCaches();
@@ -36,6 +38,10 @@ public class ProductService {
     }
 
     public Product updateProduct(String productId, Product product) {
+        if (getProductById(productId) == null) {
+            throw BusinessException.notFound("Product not found");
+        }
+        normalize(product);
         product.setId(productId);
         productMapper.updateById(product);
         redisTemplate.opsForValue().set(PRODUCT_KEY_PREFIX + productId, product, PRODUCT_CACHE_TTL_HOURS, TimeUnit.HOURS);
@@ -115,11 +121,28 @@ public class ProductService {
     }
 
     public boolean deductStock(String productId, int quantity) {
-        return productMapper.deductStock(productId, quantity) > 0;
+        if (StringUtils.isBlank(productId) || quantity <= 0) {
+            throw BusinessException.badRequest("Invalid stock deduction request");
+        }
+        boolean deducted = productMapper.deductStock(productId, quantity) > 0;
+        if (deducted) {
+            redisTemplate.delete(PRODUCT_KEY_PREFIX + productId);
+            evictListCaches();
+        }
+        return deducted;
     }
 
     void evictListCaches() {
         redisTemplate.delete(ALL_PRODUCTS_KEY);
         redisTemplate.delete(HOT_PRODUCTS_KEY);
+    }
+
+    private void normalize(Product product) {
+        if (product == null) {
+            throw BusinessException.badRequest("Product payload is required");
+        }
+        product.setName(StringUtils.trim(product.getName()));
+        product.setCategory(StringUtils.trimToNull(product.getCategory()));
+        product.setDescription(StringUtils.trimToNull(product.getDescription()));
     }
 }

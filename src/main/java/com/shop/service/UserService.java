@@ -2,8 +2,10 @@ package com.shop.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.shop.exception.BusinessException;
 import com.shop.mapper.UserMapper;
 import com.shop.model.User;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -29,7 +31,16 @@ public class UserService {
     }
 
     public User createUser(User user) {
-        if (user.getId() == null || user.getId().isEmpty()) {
+        if (StringUtils.isBlank(user.getUsername()) || StringUtils.isBlank(user.getPassword())) {
+            throw BusinessException.badRequest("Username and password are required");
+        }
+        if (getUserByUsername(user.getUsername()) != null) {
+            throw BusinessException.conflict("Username already exists");
+        }
+        if (StringUtils.isNotBlank(user.getEmail()) && emailExists(user.getEmail())) {
+            throw BusinessException.conflict("Email already exists");
+        }
+        if (StringUtils.isBlank(user.getId())) {
             user.setId(UUID.randomUUID().toString());
         }
         user.setPassword(passwordEncoder.encode(user.getPassword()));
@@ -38,6 +49,7 @@ public class UserService {
 
         String userKey = USER_KEY_PREFIX + user.getId();
         redisTemplate.opsForValue().set(userKey, user, USER_CACHE_TTL_HOURS, TimeUnit.HOURS);
+        redisTemplate.opsForValue().set(usernameKey(user.getUsername()), user, USER_CACHE_TTL_HOURS, TimeUnit.HOURS);
 
         return user;
     }
@@ -56,7 +68,10 @@ public class UserService {
     }
 
     public User getUserByUsername(String username) {
-        String usernameKey = "user:username:" + username;
+        if (StringUtils.isBlank(username)) {
+            return null;
+        }
+        String usernameKey = usernameKey(username);
         User user = (User) redisTemplate.opsForValue().get(usernameKey);
 
         if (user == null) {
@@ -71,6 +86,17 @@ public class UserService {
             }
         }
         return user;
+    }
+
+    private boolean emailExists(String email) {
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getEmail, email);
+        Long count = userMapper.selectCount(wrapper);
+        return count != null && count > 0;
+    }
+
+    private String usernameKey(String username) {
+        return "user:username:" + username;
     }
 
     public String createSession(String userId) {

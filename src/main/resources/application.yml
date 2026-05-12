@@ -31,8 +31,10 @@ spring:
 
 logging:
   level:
-    com.shop: DEBUG
-    org.springframework.data.redis: DEBUG
+    com.shop: ${LOG_LEVEL:INFO}
+    org.springframework.data.redis: WARN
+  pattern:
+    level: "%5p [traceId:%X{traceId:-}]"
 
 app:
   security:
@@ -41,5 +43,23 @@ app:
 
 mybatis-plus:
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
     map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: Redis Online Shop
+    description: Redis-backed online shop API with carts, orders and stock protection

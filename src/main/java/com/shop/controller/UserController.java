@@ -1,16 +1,26 @@
 package com.shop.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.shop.common.CurrentUser;
 import com.shop.common.Result;
+import com.shop.dto.LoginRequest;
+import com.shop.dto.RegisterRequest;
 import com.shop.dto.UserDTO;
+import com.shop.exception.BusinessException;
 import com.shop.model.User;
 import com.shop.service.UserService;
+import jakarta.validation.Valid;
 import org.springframework.beans.BeanUtils;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/users")
@@ -23,24 +33,26 @@ public class UserController {
     }
 
     @PostMapping("/register")
-    public Result<UserDTO> register(@RequestBody User user) {
-        User createdUser = userService.createUser(user);
-        return Result.success(convertToDTO(createdUser));
+    public Result<UserDTO> register(@Valid @RequestBody RegisterRequest request) {
+        User user = User.builder()
+                .username(request.getUsername())
+                .email(request.getEmail())
+                .password(request.getPassword())
+                .build();
+        return Result.success(convertToDTO(userService.createUser(user)));
     }
 
     @PostMapping("/login")
-    public Result<Map<String, Object>> login(@RequestBody User loginRequest) {
-        User user = userService.getUserByUsername(loginRequest.getUsername());
-        if (user == null || !userService.verifyPassword(loginRequest.getPassword(), user.getPassword())) {
-            return Result.error(401, "用户名或密码错误");
+    public Result<Map<String, Object>> login(@Valid @RequestBody LoginRequest request) {
+        User user = userService.getUserByUsername(request.getUsername());
+        if (user == null || !userService.verifyPassword(request.getPassword(), user.getPassword())) {
+            throw BusinessException.unauthorized("Invalid username or password");
         }
-        String sessionId = userService.createSession(user.getId());
 
         Map<String, Object> data = Map.of(
-                "sessionId", sessionId,
+                "sessionId", userService.createSession(user.getId()),
                 "user", convertToDTO(user)
         );
-
         return Result.success(data);
     }
 
@@ -51,28 +63,17 @@ public class UserController {
     }
 
     @GetMapping("/profile")
-    public Result<UserDTO> getProfile(@RequestHeader("X-Session-ID") String sessionId) {
-        User user = userService.getUserBySession(sessionId);
-
-        if (user == null) {
-            return Result.error(401, "凭证无效");
-        }
+    public Result<UserDTO> getProfile(@CurrentUser User user) {
         return Result.success(convertToDTO(user));
     }
 
     @GetMapping("/validate-session")
-    public Result<Map<String, Object>> validateSession(@RequestHeader("X-Session-ID") String sessionId) {
-        if (!userService.validateSession(sessionId)) {
-            return Result.error(401, "会话已过期或无效，请重新登录");
-        }
-        User user = userService.getUserBySession(sessionId);
-
-        Map<String, Object> data = Map.of(
+    public Result<Map<String, Object>> validateSession(@CurrentUser User user) {
+        return Result.success(Map.of(
                 "valid", true,
                 "userId", user.getId(),
                 "user", convertToDTO(user)
-        );
-        return Result.success(data);
+        ));
     }
 
     @GetMapping("/page")
@@ -85,14 +86,16 @@ public class UserController {
 
         List<UserDTO> dtoList = pageResult.getRecords().stream()
                 .map(this::convertToDTO)
-                .collect(Collectors.toList());
+                .toList();
 
         dtoPage.setRecords(dtoList);
         return Result.success(dtoPage);
     }
 
     private UserDTO convertToDTO(User user) {
-        if (user == null) return null;
+        if (user == null) {
+            return null;
+        }
         UserDTO userDTO = new UserDTO();
         BeanUtils.copyProperties(user, userDTO);
         return userDTO;

@@ -125,6 +125,9 @@ class ProductServiceTest {
 
         assertTrue(result);
         verify(productMapper).deductStock("prod_001", 5);
+        verify(redisTemplate).delete("product:prod_001");
+        verify(redisTemplate).delete("all:products");
+        verify(redisTemplate).delete("hot:products");
     }
 
     @Test

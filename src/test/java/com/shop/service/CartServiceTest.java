@@ -1,6 +1,7 @@
 package com.shop.service;
 
 import com.shop.exception.InsufficientStockException;
+import com.shop.dto.OrderDTO;
 import com.shop.model.Cart;
 import com.shop.model.Product;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,9 @@ class CartServiceTest {
     private ProductService productService;
 
     @Mock
+    private OrderService orderService;
+
+    @Mock
     private ValueOperations<String, Object> valueOperations;
 
     @InjectMocks
@@ -49,11 +53,14 @@ class CartServiceTest {
         cart.addItem(testProduct, 2);
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
         when(productService.deductStock("prod_001", 2)).thenReturn(true);
+        OrderDTO order = OrderDTO.builder().id("order_001").orderNo("SO001").build();
+        when(orderService.createOrder(eq("user_001"), anyList())).thenReturn(order);
 
-        boolean result = cartService.checkout("user_001");
+        OrderDTO result = cartService.checkout("user_001");
 
-        assertTrue(result);
+        assertEquals("order_001", result.getId());
         verify(productService).deductStock("prod_001", 2);
+        verify(orderService).createOrder(eq("user_001"), anyList());
 
         ArgumentCaptor<Cart> cartCaptor = ArgumentCaptor.forClass(Cart.class);
         verify(valueOperations, atLeastOnce()).set(eq("cart:user_001"), cartCaptor.capture(), eq(24L), eq(TimeUnit.HOURS));

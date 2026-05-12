@@ -46,6 +46,9 @@ class UserServiceTest {
     @Test
     void createUserShouldEncodePassword() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("user:username:testuser")).thenReturn(null);
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
         when(passwordEncoder.encode("raw_password")).thenReturn("hashed_password");
         when(userMapper.insert(any(User.class))).thenReturn(1);
 

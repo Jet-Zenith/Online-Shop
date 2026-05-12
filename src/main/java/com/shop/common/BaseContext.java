@@ -1,17 +1,17 @@
 package com.shop.common;
 
 public class BaseContext {
-    public static ThreadLocal<String> threadLocal = new ThreadLocal<>();
+    private static final ThreadLocal<String> THREAD_LOCAL = new ThreadLocal<>();
 
     public static void setCurrentId(String id) {
-        threadLocal.set(id);
+        THREAD_LOCAL.set(id);
     }
 
     public static String getCurrentId() {
-        return threadLocal.get();
+        return THREAD_LOCAL.get();
     }
 
     public static void removeCurrentId() {
-        threadLocal.remove();
+        THREAD_LOCAL.remove();
     }
 }

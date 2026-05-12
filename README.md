@@ -1,187 +1,135 @@
 # Redis Online Shop
 
-基于 Spring Boot + Redis + MySQL 的在线商城系统。
-
-## 功能特性
-
-- 商品管理：商品的增删改查、热门商品缓存、关键字搜索、分页查询
-- 购物车功能：添加、删除、修改购物车商品数量、合并购物车、结算
-- 用户管理：用户注册、登录、会话管理、分页查询
-- Redis 缓存：商品信息、购物车、用户会话的缓存，支持分布式部署
+一个基于 Spring Boot 3、Redis、MySQL 和 MyBatis-Plus 的在线商城后端。项目包括了注册登录、会话、购物车、库存扣减、订单落库、分页查询、统一异常、请求追踪和健康检查等企业后端常见能力。
 
 ## 技术栈
 
+- Java 21
 - Spring Boot 3.2.5
-- Spring Data Redis (Lettuce)
-- Spring Security (BCrypt)
+- Spring Web / Validation / Security / Actuator
+- Spring Data Redis
 - MyBatis-Plus 3.5.5
 - MySQL 8.x
-- Maven 3.x
-- Java 21
+- Maven
+- JUnit 5 + Mockito
 
-## 快速开始
+## 核心能力
 
-### 1. 环境准备
+- 用户注册、登录、退出、会话校验
+- 商品创建、更新、删除、详情、搜索、热门商品、分页
+- Redis 缓存商品、用户、会话和购物车数据
+- 购物车增删改查、合并、清空和结算
+- 结算时通过数据库条件更新保护库存，避免超卖
+- 结算成功后生成订单和订单明细，保存商品快照价格
+- 统一认证参数解析器，业务接口可直接注入当前用户
+- 统一异常响应，返回 traceId 方便排查问题
+- Actuator 健康检查和基础指标
 
-确保已安装并启动以下服务：
-- MySQL（默认端口 3306）
-- Redis（默认端口 6379）
+## 快速启动
 
-### 2. 创建数据库
+1. 创建数据库：
 
 ```sql
 CREATE DATABASE IF NOT EXISTS online_shop DEFAULT CHARSET utf8mb4;
 ```
 
-应用启动时会自动执行 `schema.sql` 创建表结构。
-
-### 3. 配置环境变量（必须）
-
-项目启动需要设置以下环境变量（无默认值，不设置会启动失败）：
+2. 准备环境变量：
 
 ```bash
-# 复制模板文件
 cp .env.example .env
-
-# 编辑 .env 填入真实值
-vim .env
 ```
 
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `DB_USERNAME` | 是 | 数据库用户名 |
-| `DB_PASSWORD` | 是 | 数据库密码 |
-| `DB_HOST` | 否 | MySQL 主机，默认 localhost |
-| `DB_PORT` | 否 | MySQL 端口，默认 3306 |
-| `DB_NAME` | 否 | 数据库名，默认 online_shop |
-| `REDIS_HOST` | 否 | Redis 主机，默认 localhost |
-| `REDIS_PORT` | 否 | Redis 端口，默认 6379 |
-| `JWT_SECRET` | 是 | JWT 签名密钥（至少 32 字符） |
-| `SERVER_PORT` | 否 | 服务端口，默认 8080 |
+3. 修改 `.env` 中的 MySQL、Redis 和密钥配置。
 
-### 4. 运行项目
+4. 启动项目：
 
 ```bash
-cd redis-online-shop
-mvn clean compile
 mvn spring-boot:run
 ```
 
-或者使用 `start.bat` 一键启动。
+应用默认启动在 `http://localhost:8080`。首次启动会执行 `src/main/resources/schema.sql` 初始化表结构。
 
-### 5. 测试 API
+## 常用接口
+
+### 用户
+
+- `POST /api/users/register`
+- `POST /api/users/login`
+- `POST /api/users/logout`
+- `GET /api/users/profile`
+- `GET /api/users/validate-session`
+- `GET /api/users/page?pageNum=1&pageSize=10`
+
+### 商品
+
+- `GET /api/products`
+- `GET /api/products/{id}`
+- `POST /api/products`
+- `PUT /api/products/{id}`
+- `DELETE /api/products/{id}`
+- `GET /api/products/hot`
+- `GET /api/products/search?keyword=phone&category=electronics`
+- `GET /api/products/page?pageNum=1&pageSize=10`
+
+### 购物车
+
+以下接口需要请求头 `X-Session-ID`：
+
+- `GET /api/cart`
+- `POST /api/cart/items`
+- `PUT /api/cart/items/{productId}?quantity=2`
+- `DELETE /api/cart/items/{productId}`
+- `DELETE /api/cart`
+- `POST /api/cart/merge`
+- `POST /api/cart/checkout`
+
+### 订单
+
+以下接口需要请求头 `X-Session-ID`：
+
+- `GET /api/orders?pageNum=1&pageSize=10`
+- `GET /api/orders/{id}`
+
+### 运维
+
+- `GET /actuator/health`
+- `GET /actuator/info`
+- `GET /actuator/metrics`
+
+## 示例流程
 
 ```bash
-# 注册
 curl -X POST http://localhost:8080/api/users/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"john_doe","email":"john@example.com","password":"password123"}'
+  -d "{\"username\":\"john_doe\",\"email\":\"john@example.com\",\"password\":\"password123\"}"
 
-# 登录
 curl -X POST http://localhost:8080/api/users/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"john_doe","password":"password123"}'
+  -d "{\"username\":\"john_doe\",\"password\":\"password123\"}"
 
-# 获取所有商品
-curl http://localhost:8080/api/products
-
-# 搜索商品
-curl "http://localhost:8080/api/products/search?keyword=iphone"
+curl -X POST http://localhost:8080/api/products \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"Redis Mug\",\"description\":\"A mug for cache lovers\",\"price\":39.90,\"stock\":50,\"category\":\"daily\"}"
 ```
 
-## API 列表
+登录成功后，把返回的 `sessionId` 放入 `X-Session-ID` 请求头即可访问购物车和订单接口。
 
-### 用户相关
-- `POST /api/users/register` - 注册
-- `POST /api/users/login` - 登录
-- `POST /api/users/logout` - 登出（需 X-Session-ID 头）
-- `GET /api/users/profile` - 获取个人信息
-- `GET /api/users/validate-session` - 校验会话
-- `GET /api/users/page?pageNum=1&pageSize=10` - 分页查询
+## Redis Key 设计
 
-### 商品相关
-- `GET /api/products` - 获取所有商品
-- `GET /api/products/{id}` - 获取单个商品
-- `POST /api/products` - 添加商品
-- `PUT /api/products/{id}` - 更新商品
-- `DELETE /api/products/{id}` - 删除商品
-- `GET /api/products/hot` - 热门商品（库存最少 TOP5）
-- `GET /api/products/search?keyword=&category=` - 搜索商品
-- `GET /api/products/page?pageNum=1&pageSize=10` - 分页查询
-
-### 购物车相关（均需 X-Session-ID 头）
-- `GET /api/cart` - 获取购物车
-- `POST /api/cart/items` - 添加商品
-- `DELETE /api/cart/items/{productId}` - 移除商品
-- `PUT /api/cart/items/{productId}?quantity=` - 修改数量
-- `DELETE /api/cart` - 清空购物车
-- `POST /api/cart/merge` - 合并购物车
-- `POST /api/cart/checkout` - 结算
-
-## Redis 缓存说明
-
-| Key 模式 | 内容 | TTL |
-|----------|------|-----|
-| `product:{id}` | 单个商品 | 1 小时 |
-| `all:products` | 全部商品列表 | 1 小时 |
-| `hot:products` | 热门商品 | 30 分钟 |
+| Key | 说明 | TTL |
+| --- | --- | --- |
+| `product:{id}` | 商品详情缓存 | 1 小时 |
+| `all:products` | 商品列表缓存 | 1 小时 |
+| `hot:products` | 热门商品缓存 | 30 分钟 |
 | `cart:{userId}` | 用户购物车 | 24 小时 |
 | `session:{sessionId}` | 用户会话 | 24 小时 |
-| `user:{id}` | 用户信息 | 24 小时 |
-| `user:username:{name}` | 用户名索引 | 24 小时 |
+| `user:{id}` | 用户详情缓存 | 24 小时 |
+| `user:username:{name}` | 用户名查询缓存 | 24 小时 |
 
-## 项目结构
+## 测试
 
-```
-redis-online-shop/
-├── src/main/java/com/shop/
-│   ├── common/
-│   │   ├── BaseContext.java
-│   │   └── Result.java
-│   ├── config/
-│   │   ├── MyMetaObjectHandler.java
-│   │   ├── MybatisPlusConfig.java
-│   │   ├── RedisConfig.java
-│   │   └── SecurityConfig.java
-│   ├── controller/
-│   │   ├── CartController.java
-│   │   ├── ProductController.java
-│   │   └── UserController.java
-│   ├── dto/
-│   │   ├── CartRequest.java
-│   │   ├── ProductRequest.java
-│   │   └── UserDTO.java
-│   ├── exception/
-│   │   ├── GlobalExceptionHandler.java
-│   │   ├── InsufficientStockException.java
-│   │   └── ProductNotFoundException.java
-│   ├── mapper/
-│   │   ├── ProductMapper.java
-│   │   └── UserMapper.java
-│   ├── model/
-│   │   ├── Cart.java
-│   │   ├── CartItem.java
-│   │   ├── Product.java
-│   │   └── User.java
-│   └── service/
-│       ├── CartService.java
-│       ├── ProductService.java
-│       └── UserService.java
-├── src/main/resources/
-│   ├── application.yml
-│   └── schema.sql
-├── src/test/java/com/shop/
-│   └── service/
-│       ├── CartServiceTest.java
-│       ├── ProductServiceTest.java
-│       └── UserServiceTest.java
-└── pom.xml
+```bash
+mvn test
 ```
 
-## 开发说明
-
-1. 购物车数据完全存储在 Redis 中，无对应 MySQL 表
-2. 用户会话通过 Redis 管理，支持分布式部署
-3. 结算采用原子 SQL 扣减库存（`UPDATE ... SET stock = stock - ? WHERE id = ? AND stock >= ?`），防止超卖
-4. CORS 在 SecurityConfig 中统一配置
-5. 敏感配置支持环境变量覆盖
+当前测试覆盖用户服务、商品服务、购物车结算与库存扣减等核心逻辑。

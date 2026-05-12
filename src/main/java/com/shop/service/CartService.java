@@ -2,6 +2,7 @@ package com.shop.service;
 
 import com.shop.exception.InsufficientStockException;
 import com.shop.exception.ProductNotFoundException;
+import com.shop.dto.OrderDTO;
 import com.shop.model.Cart;
 import com.shop.model.CartItem;
 import com.shop.model.Product;
@@ -18,13 +19,15 @@ public class CartService {
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final ProductService productService;
+    private final OrderService orderService;
 
     private static final String CART_KEY_PREFIX = "cart:";
     private static final long CART_TTL_HOURS = 24;
 
-    public CartService(RedisTemplate<String, Object> redisTemplate, ProductService productService) {
+    public CartService(RedisTemplate<String, Object> redisTemplate, ProductService productService, OrderService orderService) {
         this.redisTemplate = redisTemplate;
         this.productService = productService;
+        this.orderService = orderService;
     }
 
     public Cart getCart(String userId) {
@@ -50,6 +53,14 @@ public class CartService {
         }
 
         Cart cart = getCart(userId);
+        int currentQuantity = cart.getItems().stream()
+                .filter(item -> item.getProduct() != null && productId.equals(item.getProduct().getId()))
+                .mapToInt(CartItem::getQuantity)
+                .findFirst()
+                .orElse(0);
+        if (product.getStock() < currentQuantity + quantity) {
+            throw new InsufficientStockException("Insufficient stock for product: " + product.getName());
+        }
         cart.addItem(product, quantity);
         saveCartToRedis(CART_KEY_PREFIX + userId, cart);
 
@@ -71,6 +82,9 @@ public class CartService {
         Product product = productService.getProductById(productId);
         if (product == null) {
             throw new ProductNotFoundException("Product with ID " + productId + " not found");
+        }
+        if (product.getStock() < quantity) {
+            throw new InsufficientStockException("Insufficient stock for product: " + product.getName());
         }
 
         Cart cart = getCart(userId);
@@ -106,7 +120,7 @@ public class CartService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public boolean checkout(String userId) {
+    public OrderDTO checkout(String userId) {
         Cart cart = getCart(userId);
         if (cart.getItems().isEmpty()) {
             throw new IllegalStateException("Cart is empty, cannot checkout.");
@@ -125,17 +139,14 @@ public class CartService {
                     throw new InsufficientStockException(
                             "Product " + item.getProduct().getName() + " is out of stock");
                 }
-                // Invalidate product cache so next read picks up the new stock value
-                productService.evictListCaches();
             }
+            return orderService.createOrder(userId, itemsSnapshot);
         } catch (Exception e) {
             // Restore cart to Redis on failure
             cart.setItems(itemsSnapshot);
             saveCartToRedis(CART_KEY_PREFIX + userId, cart);
             throw e;
         }
-
-        return true;
     }
 
     private void saveCartToRedis(String key, Cart cart) {

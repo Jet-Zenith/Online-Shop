@@ -18,19 +18,19 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@TableName("product")
-public class Product implements Serializable {
+@TableName("shop_order")
+public class ShopOrder implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
     @TableId(type = IdType.ASSIGN_ID)
     private String id;
 
-    private String name;
-    private String description;
-    private BigDecimal price;
-    private int stock;
-    private String category;
+    private String orderNo;
+    private String userId;
+    private BigDecimal totalAmount;
+    private Integer totalQuantity;
+    private String status;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
