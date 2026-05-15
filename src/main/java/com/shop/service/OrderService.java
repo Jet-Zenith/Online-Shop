@@ -28,10 +28,12 @@ public class OrderService {
 
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
+    private final OrderEventPublisher orderEventPublisher;
 
-    public OrderService(OrderMapper orderMapper, OrderItemMapper orderItemMapper) {
+    public OrderService(OrderMapper orderMapper, OrderItemMapper orderItemMapper, OrderEventPublisher orderEventPublisher) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
+        this.orderEventPublisher = orderEventPublisher;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -65,7 +67,9 @@ public class OrderService {
             orderItemMapper.insert(item);
         }
 
-        return toDTO(order, orderItems);
+        OrderDTO orderDTO = toDTO(order, orderItems);
+        orderEventPublisher.publishOrderCreated(orderDTO);
+        return orderDTO;
     }
 
     public Page<OrderDTO> getUserOrders(String userId, int pageNum, int pageSize) {

@@ -10,8 +10,10 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -20,14 +22,24 @@ public class CartService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final ProductService productService;
     private final OrderService orderService;
+    private final DistributedLockService distributedLockService;
+    private final CheckoutIdempotencyService checkoutIdempotencyService;
 
     private static final String CART_KEY_PREFIX = "cart:";
+    private static final String CHECKOUT_LOCK_KEY_PREFIX = "lock:checkout:";
     private static final long CART_TTL_HOURS = 24;
+    private static final Duration CHECKOUT_LOCK_TTL = Duration.ofSeconds(15);
 
-    public CartService(RedisTemplate<String, Object> redisTemplate, ProductService productService, OrderService orderService) {
+    public CartService(RedisTemplate<String, Object> redisTemplate,
+                       ProductService productService,
+                       OrderService orderService,
+                       DistributedLockService distributedLockService,
+                       CheckoutIdempotencyService checkoutIdempotencyService) {
         this.redisTemplate = redisTemplate;
         this.productService = productService;
         this.orderService = orderService;
+        this.distributedLockService = distributedLockService;
+        this.checkoutIdempotencyService = checkoutIdempotencyService;
     }
 
     public Cart getCart(String userId) {
@@ -121,6 +133,46 @@ public class CartService {
 
     @Transactional(rollbackFor = Exception.class)
     public OrderDTO checkout(String userId) {
+        return checkout(userId, null);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public OrderDTO checkout(String userId, String idempotencyKey) {
+        boolean idempotent = checkoutIdempotencyService.isEnabled(idempotencyKey);
+        if (idempotent) {
+            OrderDTO completedOrder = checkoutIdempotencyService.findCompleted(userId, idempotencyKey).orElse(null);
+            if (completedOrder != null) {
+                return completedOrder;
+            }
+            checkoutIdempotencyService.begin(userId, idempotencyKey);
+        }
+
+        String lockKey = CHECKOUT_LOCK_KEY_PREFIX + userId;
+        String lockToken = UUID.randomUUID().toString();
+        if (!distributedLockService.tryLock(lockKey, lockToken, CHECKOUT_LOCK_TTL)) {
+            if (idempotent) {
+                checkoutIdempotencyService.clear(userId, idempotencyKey);
+            }
+            throw new IllegalStateException("Checkout is already in progress");
+        }
+
+        try {
+            OrderDTO orderDTO = doCheckout(userId);
+            if (idempotent) {
+                checkoutIdempotencyService.complete(userId, idempotencyKey, orderDTO);
+            }
+            return orderDTO;
+        } catch (Exception e) {
+            if (idempotent) {
+                checkoutIdempotencyService.clear(userId, idempotencyKey);
+            }
+            throw e;
+        } finally {
+            distributedLockService.releaseLock(lockKey, lockToken);
+        }
+    }
+
+    private OrderDTO doCheckout(String userId) {
         Cart cart = getCart(userId);
         if (cart.getItems().isEmpty()) {
             throw new IllegalStateException("Cart is empty, cannot checkout.");

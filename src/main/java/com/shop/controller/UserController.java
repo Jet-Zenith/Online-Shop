@@ -8,7 +8,10 @@ import com.shop.dto.RegisterRequest;
 import com.shop.dto.UserDTO;
 import com.shop.exception.BusinessException;
 import com.shop.model.User;
+import com.shop.service.JwtTokenService;
+import com.shop.service.TokenRevocationService;
 import com.shop.service.UserService;
+import org.apache.commons.lang3.StringUtils;
 import jakarta.validation.Valid;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,9 +30,15 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final JwtTokenService jwtTokenService;
+    private final TokenRevocationService tokenRevocationService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService,
+                          JwtTokenService jwtTokenService,
+                          TokenRevocationService tokenRevocationService) {
         this.userService = userService;
+        this.jwtTokenService = jwtTokenService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @PostMapping("/register")
@@ -51,14 +60,25 @@ public class UserController {
 
         Map<String, Object> data = Map.of(
                 "sessionId", userService.createSession(user.getId()),
+                "accessToken", jwtTokenService.generateToken(user),
+                "tokenType", "Bearer",
+                "expiresIn", jwtTokenService.getExpirationSeconds(),
                 "user", convertToDTO(user)
         );
         return Result.success(data);
     }
 
     @PostMapping("/logout")
-    public Result<Void> logout(@RequestHeader("X-Session-ID") String sessionId) {
-        userService.deleteSession(sessionId);
+    public Result<Void> logout(
+            @RequestHeader(value = "X-Session-ID", required = false) String sessionId,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        if (StringUtils.isNotBlank(sessionId)) {
+            userService.deleteSession(sessionId);
+        }
+        if (StringUtils.isNotBlank(authorization) && authorization.startsWith("Bearer ")) {
+            JwtTokenService.JwtClaims claims = jwtTokenService.parseToken(authorization.substring("Bearer ".length()));
+            tokenRevocationService.revoke(claims.tokenId(), claims.expiresAt());
+        }
         return Result.success();
     }
 

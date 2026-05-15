@@ -32,6 +32,9 @@ class OrderServiceTest {
     @Mock
     private OrderItemMapper orderItemMapper;
 
+    @Mock
+    private OrderEventPublisher orderEventPublisher;
+
     @InjectMocks
     private OrderService orderService;
 
@@ -63,5 +66,6 @@ class OrderServiceTest {
         assertEquals("Redis Mug", itemCaptor.getValue().getProductName());
         assertEquals(new BigDecimal("39.90"), itemCaptor.getValue().getUnitPrice());
         assertNotNull(result.getOrderNo());
+        verify(orderEventPublisher).publishOrderCreated(result);
     }
 }

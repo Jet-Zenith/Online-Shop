@@ -1,13 +1,14 @@
 # Redis Online Shop
 
-一个基于 Spring Boot 3、Redis、MySQL 和 MyBatis-Plus 的在线商城后端。项目包括了注册登录、会话、购物车、库存扣减、订单落库、分页查询、统一异常、请求追踪和健康检查等企业后端常见能力。
+一个基于 Spring Boot 3、Redis、MySQL、MyBatis-Plus 的在线商城后端项目。项目围绕真实电商链路构建：注册登录、JWT 鉴权、商品缓存、购物车、幂等结算、库存扣减、订单落库、Redis Stream 消息队列、接口限流、请求追踪和健康检查。
 
 ## 技术栈
 
 - Java 21
 - Spring Boot 3.2.5
-- Spring Web / Validation / Security / Actuator
+- Spring Web / Validation / Security / Actuator / Scheduling
 - Spring Data Redis
+- Redis String / Redis Stream / Lua
 - MyBatis-Plus 3.5.5
 - MySQL 8.x
 - Maven
@@ -16,14 +17,20 @@
 ## 核心能力
 
 - 用户注册、登录、退出、会话校验
-- 商品创建、更新、删除、详情、搜索、热门商品、分页
+- JWT Bearer Token 鉴权，支持 `jti`、过期校验、签名防篡改和 Redis 黑名单登出
+- 兼容 `X-Session-ID` 与 `Authorization: Bearer <token>` 两种认证方式
 - Redis 缓存商品、用户、会话和购物车数据
+- 商品创建、更新、删除、详情、搜索、热门商品、分页
 - 购物车增删改查、合并、清空和结算
-- 结算时通过数据库条件更新保护库存，避免超卖
+- 结算接口支持 `Idempotency-Key`，避免重复提交导致重复下单
+- Redis 分布式锁保护同一用户的并发结算流程
+- MySQL 条件更新保护库存，避免超卖
 - 结算成功后生成订单和订单明细，保存商品快照价格
-- 统一认证参数解析器，业务接口可直接注入当前用户
-- 统一异常响应，返回 traceId 方便排查问题
-- Actuator 健康检查和基础指标
+- Redis Stream 发布 `ORDER_CREATED` 订单事件
+- Redis Stream 消费者组异步消费订单事件，支持 ACK 和死信队列
+- Redis 固定窗口限流保护 `/api/**`
+- 定时任务预热商品缓存
+- 统一异常响应、traceId、Actuator 健康检查和基础指标
 
 ## 快速启动
 
@@ -39,7 +46,7 @@ CREATE DATABASE IF NOT EXISTS online_shop DEFAULT CHARSET utf8mb4;
 cp .env.example .env
 ```
 
-3. 修改 `.env` 中的 MySQL、Redis 和密钥配置。
+3. 修改 `.env` 中的 MySQL、Redis、JWT 密钥和限流配置。
 
 4. 启动项目：
 
@@ -48,6 +55,35 @@ mvn spring-boot:run
 ```
 
 应用默认启动在 `http://localhost:8080`。首次启动会执行 `src/main/resources/schema.sql` 初始化表结构。
+
+## 认证方式
+
+登录接口会同时返回 `sessionId` 和 `accessToken`：
+
+```bash
+curl -X POST http://localhost:8080/api/users/login \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"john_doe\",\"password\":\"password123\"}"
+```
+
+后续接口可以任选一种方式认证：
+
+```bash
+# JWT
+curl http://localhost:8080/api/cart \
+  -H "Authorization: Bearer <accessToken>"
+
+# Redis Session
+curl http://localhost:8080/api/cart \
+  -H "X-Session-ID: <sessionId>"
+```
+
+退出登录时，如果传入 JWT，会将 token 的 `jti` 写入 Redis 黑名单直到 token 自然过期：
+
+```bash
+curl -X POST http://localhost:8080/api/users/logout \
+  -H "Authorization: Bearer <accessToken>"
+```
 
 ## 常用接口
 
@@ -73,8 +109,6 @@ mvn spring-boot:run
 
 ### 购物车
 
-以下接口需要请求头 `X-Session-ID`：
-
 - `GET /api/cart`
 - `POST /api/cart/items`
 - `PUT /api/cart/items/{productId}?quantity=2`
@@ -83,9 +117,15 @@ mvn spring-boot:run
 - `POST /api/cart/merge`
 - `POST /api/cart/checkout`
 
-### 订单
+结算接口建议携带 `Idempotency-Key`：
 
-以下接口需要请求头 `X-Session-ID`：
+```bash
+curl -X POST http://localhost:8080/api/cart/checkout \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Idempotency-Key: checkout-20260514-001"
+```
+
+### 订单
 
 - `GET /api/orders?pageNum=1&pageSize=10`
 - `GET /api/orders/{id}`
@@ -95,24 +135,6 @@ mvn spring-boot:run
 - `GET /actuator/health`
 - `GET /actuator/info`
 - `GET /actuator/metrics`
-
-## 示例流程
-
-```bash
-curl -X POST http://localhost:8080/api/users/register \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"john_doe\",\"email\":\"john@example.com\",\"password\":\"password123\"}"
-
-curl -X POST http://localhost:8080/api/users/login \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"john_doe\",\"password\":\"password123\"}"
-
-curl -X POST http://localhost:8080/api/products \
-  -H "Content-Type: application/json" \
-  -d "{\"name\":\"Redis Mug\",\"description\":\"A mug for cache lovers\",\"price\":39.90,\"stock\":50,\"category\":\"daily\"}"
-```
-
-登录成功后，把返回的 `sessionId` 放入 `X-Session-ID` 请求头即可访问购物车和订单接口。
 
 ## Redis Key 设计
 
@@ -125,6 +147,23 @@ curl -X POST http://localhost:8080/api/products \
 | `session:{sessionId}` | 用户会话 | 24 小时 |
 | `user:{id}` | 用户详情缓存 | 24 小时 |
 | `user:username:{name}` | 用户名查询缓存 | 24 小时 |
+| `lock:checkout:{userId}` | 结算分布式锁 | 15 秒 |
+| `idempotency:checkout:{userId}:{key}` | 结算幂等结果 | 24 小时 |
+| `jwt:revoked:{jti}` | JWT 黑名单 | token 剩余有效期 |
+| `rate-limit:{ip}:{method}:{uri}:{window}` | 固定窗口限流计数 | 限流窗口期 |
+| `stream:orders` | 订单事件消息队列 | 持久化 Stream |
+| `stream:orders:dlq` | 订单事件死信队列 | 持久化 Stream |
+
+## 消息队列
+
+订单创建成功后，`OrderEventPublisher` 会将 `ORDER_CREATED` 事件写入 Redis Stream。`OrderEventConsumer` 使用消费者组异步读取消息，处理成功后 ACK；处理失败时把原消息和错误原因写入死信队列。
+
+默认配置：
+
+- Stream：`stream:orders`
+- Consumer Group：`order-service`
+- Consumer Name：`order-service-1`
+- DLQ：`stream:orders:dlq`
 
 ## 测试
 
@@ -132,4 +171,6 @@ curl -X POST http://localhost:8080/api/products \
 mvn test
 ```
 
-当前测试覆盖用户服务、商品服务、购物车结算与库存扣减等核心逻辑。
+当前测试覆盖用户服务、JWT 签发验签、商品服务、购物车结算、幂等控制、订单落库和事件发布等核心逻辑。
+
+更多简历写法和面试讲法见 `docs/resume-highlights.md`。

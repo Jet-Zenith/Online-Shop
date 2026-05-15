@@ -40,6 +40,21 @@ app:
   security:
     jwt-secret: ${JWT_SECRET}
     jwt-expiration: 86400000
+  events:
+    order-stream-key: ${ORDER_STREAM_KEY:stream:orders}
+    order-consumer-group: ${ORDER_CONSUMER_GROUP:order-service}
+    order-consumer-name: ${ORDER_CONSUMER_NAME:order-service-1}
+    order-dead-letter-stream-key: ${ORDER_DEAD_LETTER_STREAM_KEY:stream:orders:dlq}
+    consumer-enabled: ${ORDER_EVENT_CONSUMER_ENABLED:true}
+    poll-delay-ms: ${ORDER_EVENT_POLL_DELAY_MS:3000}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    max-requests: ${RATE_LIMIT_MAX_REQUESTS:120}
+    window-seconds: ${RATE_LIMIT_WINDOW_SECONDS:60}
+  cache-warmup:
+    enabled: ${CACHE_WARMUP_ENABLED:true}
+    initial-delay-ms: ${CACHE_WARMUP_INITIAL_DELAY_MS:30000}
+    fixed-delay-ms: ${CACHE_WARMUP_FIXED_DELAY_MS:300000}
 
 mybatis-plus:
   configuration:

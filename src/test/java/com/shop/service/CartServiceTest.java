@@ -14,7 +14,9 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,6 +36,12 @@ class CartServiceTest {
     private OrderService orderService;
 
     @Mock
+    private DistributedLockService distributedLockService;
+
+    @Mock
+    private CheckoutIdempotencyService checkoutIdempotencyService;
+
+    @Mock
     private ValueOperations<String, Object> valueOperations;
 
     @InjectMocks
@@ -49,6 +57,7 @@ class CartServiceTest {
     @Test
     void checkoutShouldDeductStockAtomically() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(distributedLockService.tryLock(eq("lock:checkout:user_001"), anyString(), any(Duration.class))).thenReturn(true);
         Cart cart = new Cart("user_001");
         cart.addItem(testProduct, 2);
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
@@ -61,6 +70,7 @@ class CartServiceTest {
         assertEquals("order_001", result.getId());
         verify(productService).deductStock("prod_001", 2);
         verify(orderService).createOrder(eq("user_001"), anyList());
+        verify(distributedLockService).releaseLock(eq("lock:checkout:user_001"), anyString());
 
         ArgumentCaptor<Cart> cartCaptor = ArgumentCaptor.forClass(Cart.class);
         verify(valueOperations, atLeastOnce()).set(eq("cart:user_001"), cartCaptor.capture(), eq(24L), eq(TimeUnit.HOURS));
@@ -74,6 +84,7 @@ class CartServiceTest {
     @Test
     void checkoutShouldThrowWhenStockInsufficient() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(distributedLockService.tryLock(eq("lock:checkout:user_001"), anyString(), any(Duration.class))).thenReturn(true);
         Cart cart = new Cart("user_001");
         cart.addItem(testProduct, 5);
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
@@ -85,6 +96,7 @@ class CartServiceTest {
     @Test
     void checkoutShouldRestoreCartOnFailure() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(distributedLockService.tryLock(eq("lock:checkout:user_001"), anyString(), any(Duration.class))).thenReturn(true);
         Cart cart = new Cart("user_001");
         cart.addItem(testProduct, 2);
 
@@ -113,10 +125,44 @@ class CartServiceTest {
     @Test
     void checkoutShouldThrowWhenCartEmpty() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(distributedLockService.tryLock(eq("lock:checkout:user_001"), anyString(), any(Duration.class))).thenReturn(true);
         Cart cart = new Cart("user_001");
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
 
         assertThrows(IllegalStateException.class, () -> cartService.checkout("user_001"));
+    }
+
+    @Test
+    void checkoutShouldReuseCompletedOrderForSameIdempotencyKey() {
+        OrderDTO completedOrder = OrderDTO.builder().id("order_001").orderNo("SO001").build();
+        when(checkoutIdempotencyService.isEnabled("idem-001")).thenReturn(true);
+        when(checkoutIdempotencyService.findCompleted("user_001", "idem-001")).thenReturn(Optional.of(completedOrder));
+
+        OrderDTO result = cartService.checkout("user_001", "idem-001");
+
+        assertEquals("order_001", result.getId());
+        verify(distributedLockService, never()).tryLock(anyString(), anyString(), any(Duration.class));
+        verify(productService, never()).deductStock(anyString(), anyInt());
+    }
+
+    @Test
+    void checkoutShouldCompleteIdempotencyRecordAfterSuccess() {
+        when(checkoutIdempotencyService.isEnabled("idem-001")).thenReturn(true);
+        when(checkoutIdempotencyService.findCompleted("user_001", "idem-001")).thenReturn(Optional.empty());
+        when(distributedLockService.tryLock(eq("lock:checkout:user_001"), anyString(), any(Duration.class))).thenReturn(true);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        Cart cart = new Cart("user_001");
+        cart.addItem(testProduct, 1);
+        when(valueOperations.get("cart:user_001")).thenReturn(cart);
+        when(productService.deductStock("prod_001", 1)).thenReturn(true);
+        OrderDTO order = OrderDTO.builder().id("order_001").orderNo("SO001").build();
+        when(orderService.createOrder(eq("user_001"), anyList())).thenReturn(order);
+
+        OrderDTO result = cartService.checkout("user_001", "idem-001");
+
+        assertEquals("order_001", result.getId());
+        verify(checkoutIdempotencyService).begin("user_001", "idem-001");
+        verify(checkoutIdempotencyService).complete("user_001", "idem-001", order);
     }
 
     @Test
