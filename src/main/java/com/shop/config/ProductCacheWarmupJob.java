@@ -29,7 +29,7 @@ public class ProductCacheWarmupJob {
         }
         try {
             productService.getHotProducts();
-            productService.getAllProducts();
+            productService.getProductsByPage(1, 100);
             log.info("Product cache warmup finished");
         } catch (RuntimeException ex) {
             log.warn("Product cache warmup skipped: {}", ex.getMessage());

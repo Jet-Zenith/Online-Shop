@@ -1,6 +1,7 @@
 package com.shop.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.shop.mapper.ProductMapper;
 import com.shop.model.Product;
 import org.junit.jupiter.api.Test;
@@ -166,5 +167,16 @@ class ProductServiceTest {
 
         assertEquals(1, result.size());
         verify(productMapper, never()).selectList(any(LambdaQueryWrapper.class));
+    }
+
+    @Test
+    void getProductsByPageShouldSanitizePaginationArguments() {
+        when(productMapper.selectPage(any(Page.class), isNull())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Page<Product> result = productService.getProductsByPage(0, 10_000);
+
+        assertEquals(1, result.getCurrent());
+        assertEquals(100, result.getSize());
+        verify(productMapper).selectPage(any(Page.class), isNull());
     }
 }

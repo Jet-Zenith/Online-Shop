@@ -24,6 +24,9 @@ public class ProductService {
     private static final String HOT_PRODUCTS_KEY = "hot:products";
     private static final long PRODUCT_CACHE_TTL_HOURS = 1;
     private static final long HOT_PRODUCTS_TTL_MINUTES = 30;
+    private static final int DEFAULT_PAGE_NUM = 1;
+    private static final int MIN_PAGE_SIZE = 1;
+    private static final int MAX_PAGE_SIZE = 100;
 
     public ProductService(RedisTemplate<String, Object> redisTemplate,
                           ProductMapper productMapper,
@@ -91,18 +94,36 @@ public class ProductService {
         return products;
     }
 
+    /**
+     * 获取首页热门商品列表
+     * 采用经典的 Cache-Aside (旁路缓存) 模式，极大地减轻数据库压力。
+     *
+     * @return 热门商品列表
+     */
     public List<Product> getHotProducts() {
+        // 1. 第一防线：查缓存
+        // 从 Redis 中尝试获取热门数据。此处高并发下命中率极高。
         @SuppressWarnings("unchecked")
         List<Product> hotProducts = (List<Product>) redisTemplate.opsForValue().get(HOT_PRODUCTS_KEY);
+
+        // 如果缓存命中，直接返回，不再请求数据库 (短路返回)
         if (hotProducts != null) {
             return hotProducts;
         }
 
+        // 2. 第二防线：查数据库 (缓存未命中或已过期)
+        // 业务逻辑简易实现：取出库存最少的 5 件商品视为"热门"
+        // .last("limit 5") 保证了只会返回 5 条，避免了潜在的 OOM 风险
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByAsc(Product::getStock).last("limit 5");
-
         hotProducts = productMapper.selectList(wrapper);
+
+        // 3. 回写缓存 (极其关键)
+        // 将查询到的结果存入 Redis，并设置过期时间（防止数据永久变脏）。
+        // ⚠️ 高并发预警：此处存在"缓存击穿"风险。极端情况下缓存失效的瞬间，
+        // 大量并发会打穿缓存直奔 MySQL。进阶方案可引入分布式锁 (互斥锁) 处理。
         redisTemplate.opsForValue().set(HOT_PRODUCTS_KEY, hotProducts, HOT_PRODUCTS_TTL_MINUTES, TimeUnit.MINUTES);
+
         return hotProducts;
     }
 
@@ -134,7 +155,9 @@ public class ProductService {
     }
 
     public Page<Product> getProductsByPage(int pageNum, int pageSize) {
-        Page<Product> page = new Page<>(pageNum, pageSize);
+        int safePageNum = Math.max(pageNum, DEFAULT_PAGE_NUM);
+        int safePageSize = Math.min(Math.max(pageSize, MIN_PAGE_SIZE), MAX_PAGE_SIZE);
+        Page<Product> page = new Page<>(safePageNum, safePageSize);
         return productMapper.selectPage(page, null);
     }
 

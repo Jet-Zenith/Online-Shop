@@ -121,7 +121,7 @@ curl -X POST http://localhost:8080/api/users/logout \
 
 ### 商品
 
-- `GET /api/products`
+- `GET /api/products?pageNum=1&pageSize=20` (pageSize max 100)
 - `GET /api/products/{id}`
 - `POST /api/products`
 - `PUT /api/products/{id}`
@@ -129,7 +129,7 @@ curl -X POST http://localhost:8080/api/users/logout \
 - `GET /api/products/hot`
 - `GET /api/products/search?keyword=phone&category=electronics`
 - `POST /api/products/search/rebuild`
-- `GET /api/products/page?pageNum=1&pageSize=10`
+- `GET /api/products/page?pageNum=1&pageSize=20` (legacy alias, pageSize max 100)
 
 `/api/products/search` 默认优先使用 Elasticsearch；`/api/products/search/rebuild` 用于从 MySQL 重建商品搜索索引。
 
