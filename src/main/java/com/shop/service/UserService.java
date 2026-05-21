@@ -30,25 +30,45 @@ public class UserService {
         this.redisTemplate = redisTemplate;
     }
 
+    /**
+     * 创建新用户
+     * 包含参数校验、唯一性冲突检测、密码安全哈希以及缓存主动预热功能。
+     *
+     * @param user 包含用户注册信息（用户名、明文密码、邮箱等）的实体对象
+     * @return 创建成功并分配了 ID 且脱敏处理后的 User 对象
+     */
     public User createUser(User user) {
+        // 1. 基础参数边界校验 (Fail-Fast)
         if (StringUtils.isBlank(user.getUsername()) || StringUtils.isBlank(user.getPassword())) {
             throw BusinessException.badRequest("Username and password are required");
         }
+        // 2. 唯一性冲突检测
+        // 注意：这里的代码级校验是为了快速响应前端。
+        // TODO：在高并发场景下为防并发穿透，数据库层面仍需对 username 和 email 建立 Unique Index 兜底。
         if (getUserByUsername(user.getUsername()) != null) {
             throw BusinessException.conflict("Username already exists");
         }
         if (StringUtils.isNotBlank(user.getEmail()) && emailExists(user.getEmail())) {
             throw BusinessException.conflict("Email already exists");
         }
+        // 3. ID 生成策略
+        // TODO：如果上游没有传入 ID，则使用 UUID 保证全局唯一（若采用分布式自增雪花算法，可在此处替换）
         if (StringUtils.isBlank(user.getId())) {
             user.setId(UUID.randomUUID().toString());
         }
+        // 4. 密码哈希
+        // 严禁明文密码入库！使用 BCrypt 等强哈希算法进行加盐加密
         user.setPassword(passwordEncoder.encode(user.getPassword()));
 
+        // 5. 数据落盘
         userMapper.insert(user);
 
+        // 6. 缓存主动预热 & 冗余双写
+        // 注册成功后立刻将数据写入 Redis，确保用户随后的首次登录或查询极速响应
         String userKey = USER_KEY_PREFIX + user.getId();
+        // 按 userId 缓存，服务于内部业务流转
         redisTemplate.opsForValue().set(userKey, user, USER_CACHE_TTL_HOURS, TimeUnit.HOURS);
+        // 按 username 缓存，服务于用户后续的账号密码登录场景
         redisTemplate.opsForValue().set(usernameKey(user.getUsername()), user, USER_CACHE_TTL_HOURS, TimeUnit.HOURS);
 
         return user;
@@ -109,6 +129,14 @@ public class UserService {
         return count != null && count > 0;
     }
 
+    /**
+     * 生成用于 Redis 缓存的 Username Key
+     * 采用统一的冒号分隔命名规范，便于在 Redis 可视化工具中以树形目录查看，
+     * 同时消除代码中的魔法字符串，集中管理 Key 的生成规则。
+     *
+     * @param username 用户的登录名
+     * @return 拼接好的 Redis Key，例如 "user:username:admin"
+     */
     private String usernameKey(String username) {
         return "user:username:" + username;
     }

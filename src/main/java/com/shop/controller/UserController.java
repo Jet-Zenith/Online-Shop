@@ -129,11 +129,25 @@ public class UserController {
         return Result.success(dtoPage);
     }
 
+    /**
+     * 将 User 数据库实体对象转换为 UserDTO 数据传输对象
+     * 作用：剥离实体类中的敏感字段，仅将安全且前端需要的字段暴露出去。
+     *
+     * @param user 数据库查询出的完整用户实体
+     * @return 过滤后的安全用户传输对象 (DTO)，若入参为空则安全返回 null
+     */
     private UserDTO convertToDTO(User user) {
+        // 1. 防御性编程：基础判空，防止后续执行反射拷贝时触发 NullPointerException
         if (user == null) {
             return null;
         }
+        // 2. 初始化目标数据传输对象
         UserDTO userDTO = new UserDTO();
+
+        // 3. 属性自动拷贝
+        // 使用 Spring 框架自带的 BeanUtils。
+        // 原理：底层利用 Java 反射机制，自动提取 user 中与 userDTO 属性名相同且类型匹配的字段进行赋值。
+        // 效果：User 对象中独有的敏感字段（UserDTO 中没定义的字段）会被天然过滤丢弃，实现安全脱敏。
         BeanUtils.copyProperties(user, userDTO);
         return userDTO;
     }
