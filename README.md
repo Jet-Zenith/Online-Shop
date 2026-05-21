@@ -223,5 +223,3 @@ mvn test
 ```
 
 当前测试覆盖用户服务、JWT 签发验签、商品服务、Elasticsearch 搜索降级、购物车结算、幂等控制、订单落库、Outbox 事件落库和事件发布等核心逻辑。
-
-更多简历写法和面试讲法见 `docs/resume-highlights.md`。
