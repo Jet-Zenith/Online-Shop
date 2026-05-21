@@ -42,6 +42,9 @@ class CartServiceTest {
     private CheckoutIdempotencyService checkoutIdempotencyService;
 
     @Mock
+    private InventoryAlertService inventoryAlertService;
+
+    @Mock
     private ValueOperations<String, Object> valueOperations;
 
     @InjectMocks
@@ -70,6 +73,7 @@ class CartServiceTest {
         assertEquals("order_001", result.getId());
         verify(productService).deductStock("prod_001", 2);
         verify(orderService).createOrder(eq("user_001"), anyList());
+        verify(inventoryAlertService).checkLowStock("prod_001");
         verify(distributedLockService).releaseLock(eq("lock:checkout:user_001"), anyString());
 
         ArgumentCaptor<Cart> cartCaptor = ArgumentCaptor.forClass(Cart.class);

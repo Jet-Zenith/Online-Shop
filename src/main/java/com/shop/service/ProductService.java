@@ -17,6 +17,7 @@ public class ProductService {
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final ProductMapper productMapper;
+    private final ProductSearchService productSearchService;
 
     private static final String PRODUCT_KEY_PREFIX = "product:";
     private static final String ALL_PRODUCTS_KEY = "all:products";
@@ -24,9 +25,12 @@ public class ProductService {
     private static final long PRODUCT_CACHE_TTL_HOURS = 1;
     private static final long HOT_PRODUCTS_TTL_MINUTES = 30;
 
-    public ProductService(RedisTemplate<String, Object> redisTemplate, ProductMapper productMapper) {
+    public ProductService(RedisTemplate<String, Object> redisTemplate,
+                          ProductMapper productMapper,
+                          ProductSearchService productSearchService) {
         this.redisTemplate = redisTemplate;
         this.productMapper = productMapper;
+        this.productSearchService = productSearchService;
     }
 
     public Product createProduct(Product product) {
@@ -34,6 +38,7 @@ public class ProductService {
         productMapper.insert(product);
         redisTemplate.opsForValue().set(PRODUCT_KEY_PREFIX + product.getId(), product, PRODUCT_CACHE_TTL_HOURS, TimeUnit.HOURS);
         evictListCaches();
+        productSearchService.index(product);
         return product;
     }
 
@@ -46,6 +51,7 @@ public class ProductService {
         productMapper.updateById(product);
         redisTemplate.opsForValue().set(PRODUCT_KEY_PREFIX + productId, product, PRODUCT_CACHE_TTL_HOURS, TimeUnit.HOURS);
         evictListCaches();
+        productSearchService.index(product);
         return product;
     }
 
@@ -54,6 +60,7 @@ public class ProductService {
         if (rows > 0) {
             redisTemplate.delete(PRODUCT_KEY_PREFIX + productId);
             evictListCaches();
+            productSearchService.delete(productId);
             return true;
         }
         return false;
@@ -100,6 +107,11 @@ public class ProductService {
     }
 
     public List<Product> searchProducts(String keyword, String category) {
+        List<Product> elasticsearchResult = productSearchService.search(keyword, category).orElse(null);
+        if (elasticsearchResult != null) {
+            return elasticsearchResult;
+        }
+
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
 
         if (StringUtils.isNotBlank(keyword)) {
@@ -115,6 +127,12 @@ public class ProductService {
         return productMapper.selectList(wrapper);
     }
 
+    public int rebuildSearchIndex() {
+        List<Product> products = productMapper.selectList(null);
+        productSearchService.rebuildIndex(products);
+        return products.size();
+    }
+
     public Page<Product> getProductsByPage(int pageNum, int pageSize) {
         Page<Product> page = new Page<>(pageNum, pageSize);
         return productMapper.selectPage(page, null);
@@ -128,6 +146,10 @@ public class ProductService {
         if (deducted) {
             redisTemplate.delete(PRODUCT_KEY_PREFIX + productId);
             evictListCaches();
+            Product product = productMapper.selectById(productId);
+            if (product != null) {
+                productSearchService.index(product);
+            }
         }
         return deducted;
     }

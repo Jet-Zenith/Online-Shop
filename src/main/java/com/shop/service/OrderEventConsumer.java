@@ -1,7 +1,7 @@
 package com.shop.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import com.shop.event.OrderEventProperties;
 import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -22,41 +22,29 @@ import java.util.Map;
 public class OrderEventConsumer {
 
     private final RedisTemplate<String, Object> redisTemplate;
-    private final String streamKey;
-    private final String consumerGroup;
-    private final String consumerName;
-    private final String deadLetterStreamKey;
-    private final boolean enabled;
+    private final OrderEventProperties properties;
     private volatile boolean groupReady;
 
-    public OrderEventConsumer(
-            RedisTemplate<String, Object> redisTemplate,
-            @Value("${app.events.order-stream-key:stream:orders}") String streamKey,
-            @Value("${app.events.order-consumer-group:order-service}") String consumerGroup,
-            @Value("${app.events.order-consumer-name:order-service-1}") String consumerName,
-            @Value("${app.events.order-dead-letter-stream-key:stream:orders:dlq}") String deadLetterStreamKey,
-            @Value("${app.events.consumer-enabled:true}") boolean enabled) {
+    public OrderEventConsumer(RedisTemplate<String, Object> redisTemplate, OrderEventProperties properties) {
         this.redisTemplate = redisTemplate;
-        this.streamKey = streamKey;
-        this.consumerGroup = consumerGroup;
-        this.consumerName = consumerName;
-        this.deadLetterStreamKey = deadLetterStreamKey;
-        this.enabled = enabled;
+        this.properties = properties;
     }
 
     @Scheduled(fixedDelayString = "${app.events.poll-delay-ms:3000}")
     public void consumeOrderEvents() {
-        if (!enabled || !ensureConsumerGroup()) {
+        if (!properties.isConsumerEnabled()
+                || !"redis-stream".equalsIgnoreCase(properties.getBackend())
+                || !ensureConsumerGroup()) {
             return;
         }
 
         try {
             List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
-                    Consumer.from(consumerGroup, consumerName),
+                    Consumer.from(properties.getOrderConsumerGroup(), properties.getOrderConsumerName()),
                     org.springframework.data.redis.connection.stream.StreamReadOptions.empty()
                             .count(10)
                             .block(Duration.ofMillis(500)),
-                    StreamOffset.create(streamKey, ReadOffset.lastConsumed())
+                    StreamOffset.create(properties.getOrderStreamKey(), ReadOffset.lastConsumed())
             );
 
             if (records == null || records.isEmpty()) {
@@ -93,9 +81,14 @@ public class OrderEventConsumer {
             return true;
         }
         try {
-            redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0-0"), consumerGroup);
+            redisTemplate.opsForStream().createGroup(
+                    properties.getOrderStreamKey(),
+                    ReadOffset.from("0-0"),
+                    properties.getOrderConsumerGroup()
+            );
             groupReady = true;
-            log.info("Created Redis Stream consumer group {} for {}", consumerGroup, streamKey);
+            log.info("Created Redis Stream consumer group {} for {}",
+                    properties.getOrderConsumerGroup(), properties.getOrderStreamKey());
             return true;
         } catch (RedisSystemException ex) {
             if (ex.getMessage() != null && ex.getMessage().contains("BUSYGROUP")) {
@@ -111,16 +104,21 @@ public class OrderEventConsumer {
     }
 
     private void acknowledge(RecordId recordId) {
-        redisTemplate.opsForStream().acknowledge(streamKey, consumerGroup, recordId);
+        redisTemplate.opsForStream().acknowledge(
+                properties.getOrderStreamKey(),
+                properties.getOrderConsumerGroup(),
+                recordId
+        );
     }
 
     private void publishDeadLetter(MapRecord<String, Object, Object> record, RuntimeException ex) {
         Map<String, Object> deadLetter = new LinkedHashMap<>();
-        deadLetter.put("sourceStream", streamKey);
+        deadLetter.put("sourceStream", properties.getOrderStreamKey());
         deadLetter.put("sourceRecordId", record.getId().getValue());
         deadLetter.put("error", ex.getMessage());
         record.getValue().forEach((key, value) -> deadLetter.put(String.valueOf(key), value));
-        redisTemplate.opsForStream().add(deadLetterStreamKey, deadLetter);
-        log.warn("Moved order event {} to dead letter stream {}", record.getId(), deadLetterStreamKey);
+        redisTemplate.opsForStream().add(properties.getOrderDeadLetterStreamKey(), deadLetter);
+        log.warn("Moved order event {} to dead letter stream {}",
+                record.getId(), properties.getOrderDeadLetterStreamKey());
     }
 }

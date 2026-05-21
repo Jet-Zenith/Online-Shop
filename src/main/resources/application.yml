@@ -19,6 +19,13 @@ spring:
           max-idle: 8
           min-idle: 0
           max-wait: -1ms
+    elasticsearch:
+      repositories:
+        enabled: false
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
+    username: ${ELASTICSEARCH_USERNAME:}
+    password: ${ELASTICSEARCH_PASSWORD:}
   cache:
     type: redis
     redis:
@@ -41,12 +48,23 @@ app:
     jwt-secret: ${JWT_SECRET}
     jwt-expiration: 86400000
   events:
+    backend: ${ORDER_EVENT_BACKEND:rocketmq}
     order-stream-key: ${ORDER_STREAM_KEY:stream:orders}
     order-consumer-group: ${ORDER_CONSUMER_GROUP:order-service}
     order-consumer-name: ${ORDER_CONSUMER_NAME:order-service-1}
     order-dead-letter-stream-key: ${ORDER_DEAD_LETTER_STREAM_KEY:stream:orders:dlq}
     consumer-enabled: ${ORDER_EVENT_CONSUMER_ENABLED:true}
     poll-delay-ms: ${ORDER_EVENT_POLL_DELAY_MS:3000}
+    order-topic: ${ROCKETMQ_ORDER_TOPIC:shop-order-events}
+    order-created-tag: ${ROCKETMQ_ORDER_CREATED_TAG:ORDER_CREATED}
+    rocketmq-consumer-group: ${ROCKETMQ_ORDER_CONSUMER_GROUP:shop-order-event-consumer}
+  inventory:
+    low-stock-threshold: ${LOW_STOCK_THRESHOLD:5}
+  outbox:
+    enabled: ${OUTBOX_ENABLED:true}
+    batch-size: ${OUTBOX_BATCH_SIZE:20}
+    max-retries: ${OUTBOX_MAX_RETRIES:5}
+    relay-delay-ms: ${OUTBOX_RELAY_DELAY_MS:5000}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     max-requests: ${RATE_LIMIT_MAX_REQUESTS:120}
@@ -55,6 +73,9 @@ app:
     enabled: ${CACHE_WARMUP_ENABLED:true}
     initial-delay-ms: ${CACHE_WARMUP_INITIAL_DELAY_MS:30000}
     fixed-delay-ms: ${CACHE_WARMUP_FIXED_DELAY_MS:300000}
+  search:
+    elasticsearch:
+      enabled: ${ELASTICSEARCH_ENABLED:true}
 
 mybatis-plus:
   configuration:
@@ -78,3 +99,8 @@ info:
   app:
     name: Redis Online Shop
     description: Redis-backed online shop API with carts, orders and stock protection
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAME_SERVER:localhost:9876}
+  producer:
+    group: ${ROCKETMQ_PRODUCER_GROUP:redis-online-shop-producer}

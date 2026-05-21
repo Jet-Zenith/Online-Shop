@@ -56,3 +56,19 @@ CREATE TABLE IF NOT EXISTS `order_item` (
     INDEX `idx_order_item_order` (`order_id`),
     INDEX `idx_order_item_product` (`product_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Order items';
+
+CREATE TABLE IF NOT EXISTS `event_outbox` (
+    `id`             VARCHAR(64)   NOT NULL COMMENT 'Outbox event ID',
+    `aggregate_type` VARCHAR(64)   NOT NULL COMMENT 'Aggregate type',
+    `aggregate_id`   VARCHAR(64)   NOT NULL COMMENT 'Aggregate ID',
+    `event_type`     VARCHAR(64)   NOT NULL COMMENT 'Event type',
+    `payload`        JSON          NOT NULL COMMENT 'Event payload',
+    `status`         VARCHAR(32)   NOT NULL COMMENT 'PENDING/SENT/FAILED',
+    `retry_count`    INT           NOT NULL DEFAULT 0 COMMENT 'Retry count',
+    `last_error`     VARCHAR(500)  DEFAULT NULL COMMENT 'Last publish error',
+    `create_time`    DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT 'Created time',
+    `update_time`    DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Updated time',
+    PRIMARY KEY (`id`),
+    INDEX `idx_outbox_status_time` (`status`, `create_time`),
+    INDEX `idx_outbox_aggregate` (`aggregate_type`, `aggregate_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Transactional outbox events';

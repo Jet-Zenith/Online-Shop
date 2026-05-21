@@ -1,6 +1,6 @@
 # Redis Online Shop
 
-一个基于 Spring Boot 3、Redis、MySQL、MyBatis-Plus 的在线商城后端项目。项目围绕真实电商链路构建：注册登录、JWT 鉴权、商品缓存、购物车、幂等结算、库存扣减、订单落库、Redis Stream 消息队列、接口限流、请求追踪和健康检查。
+一个基于 Spring Boot 3、Redis、MySQL、MyBatis-Plus、RocketMQ、Elasticsearch 的在线商城后端项目。项目围绕真实电商链路构建：注册登录、JWT 鉴权、商品缓存、商品全文检索、购物车、幂等结算、库存扣减、订单落库、Transactional Outbox、RocketMQ 异步消息、接口限流、请求追踪和健康检查。
 
 ## 技术栈
 
@@ -9,6 +9,8 @@
 - Spring Web / Validation / Security / Actuator / Scheduling
 - Spring Data Redis
 - Redis String / Redis Stream / Lua
+- RocketMQ Spring Boot Starter
+- Spring Data Elasticsearch
 - MyBatis-Plus 3.5.5
 - MySQL 8.x
 - Maven
@@ -21,15 +23,20 @@
 - 兼容 `X-Session-ID` 与 `Authorization: Bearer <token>` 两种认证方式
 - Redis 缓存商品、用户、会话和购物车数据
 - 商品创建、更新、删除、详情、搜索、热门商品、分页
+- Elasticsearch 商品全文检索，支持名称、描述、分类搜索
+- 商品增删改和库存扣减后同步 Elasticsearch 索引
+- Elasticsearch 不可用时自动降级到 MySQL `LIKE` 查询
 - 购物车增删改查、合并、清空和结算
 - 结算接口支持 `Idempotency-Key`，避免重复提交导致重复下单
 - Redis 分布式锁保护同一用户的并发结算流程
 - MySQL 条件更新保护库存，避免超卖
 - 结算成功后生成订单和订单明细，保存商品快照价格
-- Redis Stream 发布 `ORDER_CREATED` 订单事件
-- Redis Stream 消费者组异步消费订单事件，支持 ACK 和死信队列
+- Transactional Outbox 保证订单落库与消息投递最终一致
+- RocketMQ 发布并消费 `ORDER_CREATED` 订单事件
+- Redis Stream 可作为本地消息队列降级通道
 - Redis 固定窗口限流保护 `/api/**`
 - 定时任务预热商品缓存
+- 低库存预警：结算扣减库存后自动检查阈值并输出预警日志
 - 统一异常响应、traceId、Actuator 健康检查和基础指标
 
 ## 快速启动
@@ -46,7 +53,7 @@ CREATE DATABASE IF NOT EXISTS online_shop DEFAULT CHARSET utf8mb4;
 cp .env.example .env
 ```
 
-3. 修改 `.env` 中的 MySQL、Redis、JWT 密钥和限流配置。
+3. 修改 `.env` 中的 MySQL、Redis、RocketMQ、Elasticsearch、JWT 密钥和限流配置。
 
 4. 启动项目：
 
@@ -55,6 +62,22 @@ mvn spring-boot:run
 ```
 
 应用默认启动在 `http://localhost:8080`。首次启动会执行 `src/main/resources/schema.sql` 初始化表结构。
+
+如果本地没有 RocketMQ，可以临时设置：
+
+```bash
+ORDER_EVENT_BACKEND=redis-stream
+```
+
+这样订单事件会使用 Redis Stream 通道，便于本地开发。
+
+如果本地没有 Elasticsearch，可以临时设置：
+
+```bash
+ELASTICSEARCH_ENABLED=false
+```
+
+这样商品搜索会自动使用 MySQL 查询。
 
 ## 认证方式
 
@@ -105,7 +128,10 @@ curl -X POST http://localhost:8080/api/users/logout \
 - `DELETE /api/products/{id}`
 - `GET /api/products/hot`
 - `GET /api/products/search?keyword=phone&category=electronics`
+- `POST /api/products/search/rebuild`
 - `GET /api/products/page?pageNum=1&pageSize=10`
+
+`/api/products/search` 默认优先使用 Elasticsearch；`/api/products/search/rebuild` 用于从 MySQL 重建商品搜索索引。
 
 ### 购物车
 
@@ -154,16 +180,41 @@ curl -X POST http://localhost:8080/api/cart/checkout \
 | `stream:orders` | 订单事件消息队列 | 持久化 Stream |
 | `stream:orders:dlq` | 订单事件死信队列 | 持久化 Stream |
 
-## 消息队列
+## 消息队列与 Outbox
 
-订单创建成功后，`OrderEventPublisher` 会将 `ORDER_CREATED` 事件写入 Redis Stream。`OrderEventConsumer` 使用消费者组异步读取消息，处理成功后 ACK；处理失败时把原消息和错误原因写入死信队列。
+订单创建成功后，系统不会在事务中直接依赖 MQ 成败，而是先把事件写入 `event_outbox` 表。`OrderOutboxService` 定时扫描 `PENDING` 事件并投递到 RocketMQ，发送成功后标记为 `SENT`，失败时增加重试次数，超过阈值标记为 `FAILED`。
 
 默认配置：
 
+- RocketMQ NameServer：`localhost:9876`
+- RocketMQ Topic：`shop-order-events`
+- RocketMQ Tag：`ORDER_CREATED`
+- RocketMQ Consumer Group：`shop-order-event-consumer`
+- Outbox Relay：每 5 秒扫描一次，默认最多重试 5 次
+
+本地降级配置：
+
+- `ORDER_EVENT_BACKEND=redis-stream`
 - Stream：`stream:orders`
 - Consumer Group：`order-service`
 - Consumer Name：`order-service-1`
 - DLQ：`stream:orders:dlq`
+
+## 架构流程
+
+```mermaid
+flowchart LR
+    A["Cart Checkout"] --> B["Redis Distributed Lock"]
+    B --> C["Idempotency-Key Check"]
+    C --> D["MySQL Stock Deduction"]
+    D --> E["Order + Order Items"]
+    E --> F["event_outbox(PENDING)"]
+    F --> G["Outbox Relay Job"]
+    G --> H["RocketMQ Topic"]
+    H --> I["Order Event Consumer"]
+    D --> J["Low Stock Alert"]
+    E --> K["Elasticsearch Index Sync"]
+```
 
 ## 测试
 
@@ -171,6 +222,6 @@ curl -X POST http://localhost:8080/api/cart/checkout \
 mvn test
 ```
 
-当前测试覆盖用户服务、JWT 签发验签、商品服务、购物车结算、幂等控制、订单落库和事件发布等核心逻辑。
+当前测试覆盖用户服务、JWT 签发验签、商品服务、Elasticsearch 搜索降级、购物车结算、幂等控制、订单落库、Outbox 事件落库和事件发布等核心逻辑。
 
 更多简历写法和面试讲法见 `docs/resume-highlights.md`。

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/products")
@@ -58,6 +59,12 @@ public class ProductController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String category) {
         return Result.success(productService.searchProducts(keyword, category));
+    }
+
+    @PostMapping("/search/rebuild")
+    public Result<Map<String, Object>> rebuildSearchIndex() {
+        int indexed = productService.rebuildSearchIndex();
+        return Result.success(Map.of("indexed", indexed));
     }
 
     @PutMapping("/{id}")

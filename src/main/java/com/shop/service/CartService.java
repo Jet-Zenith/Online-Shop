@@ -24,6 +24,7 @@ public class CartService {
     private final OrderService orderService;
     private final DistributedLockService distributedLockService;
     private final CheckoutIdempotencyService checkoutIdempotencyService;
+    private final InventoryAlertService inventoryAlertService;
 
     private static final String CART_KEY_PREFIX = "cart:";
     private static final String CHECKOUT_LOCK_KEY_PREFIX = "lock:checkout:";
@@ -34,12 +35,14 @@ public class CartService {
                        ProductService productService,
                        OrderService orderService,
                        DistributedLockService distributedLockService,
-                       CheckoutIdempotencyService checkoutIdempotencyService) {
+                       CheckoutIdempotencyService checkoutIdempotencyService,
+                       InventoryAlertService inventoryAlertService) {
         this.redisTemplate = redisTemplate;
         this.productService = productService;
         this.orderService = orderService;
         this.distributedLockService = distributedLockService;
         this.checkoutIdempotencyService = checkoutIdempotencyService;
+        this.inventoryAlertService = inventoryAlertService;
     }
 
     public Cart getCart(String userId) {
@@ -178,7 +181,6 @@ public class CartService {
             throw new IllegalStateException("Cart is empty, cannot checkout.");
         }
 
-        // Snapshot cart items before clearing, so we can restore on failure
         List<CartItem> itemsSnapshot = new ArrayList<>(cart.getItems());
 
         // Clear cart from Redis first — if this fails, we abort before touching stock
@@ -191,6 +193,7 @@ public class CartService {
                     throw new InsufficientStockException(
                             "Product " + item.getProduct().getName() + " is out of stock");
                 }
+                inventoryAlertService.checkLowStock(item.getProduct().getId());
             }
             return orderService.createOrder(userId, itemsSnapshot);
         } catch (Exception e) {

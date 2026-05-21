@@ -13,6 +13,7 @@ import org.springframework.data.redis.core.ValueOperations;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -27,6 +28,9 @@ class ProductServiceTest {
 
     @Mock
     private ProductMapper productMapper;
+
+    @Mock
+    private ProductSearchService productSearchService;
 
     @Mock
     private ValueOperations<String, Object> valueOperations;
@@ -103,6 +107,7 @@ class ProductServiceTest {
         verify(valueOperations).set(eq("product:prod_001"), eq(testProduct), eq(1L), eq(TimeUnit.HOURS));
         verify(redisTemplate).delete("all:products");
         verify(redisTemplate).delete("hot:products");
+        verify(productSearchService).index(testProduct);
     }
 
     @Test
@@ -115,11 +120,13 @@ class ProductServiceTest {
         verify(redisTemplate).delete("product:prod_001");
         verify(redisTemplate).delete("all:products");
         verify(redisTemplate).delete("hot:products");
+        verify(productSearchService).delete("prod_001");
     }
 
     @Test
     void deductStockShouldDelegateToMapper() {
         when(productMapper.deductStock("prod_001", 5)).thenReturn(1);
+        when(productMapper.selectById("prod_001")).thenReturn(testProduct);
 
         boolean result = productService.deductStock("prod_001", 5);
 
@@ -128,6 +135,7 @@ class ProductServiceTest {
         verify(redisTemplate).delete("product:prod_001");
         verify(redisTemplate).delete("all:products");
         verify(redisTemplate).delete("hot:products");
+        verify(productSearchService).index(testProduct);
     }
 
     @Test
@@ -141,11 +149,22 @@ class ProductServiceTest {
 
     @Test
     void searchProductsShouldBuildLikeQuery() {
+        when(productSearchService.search("Test", null)).thenReturn(Optional.empty());
         when(productMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(testProduct));
 
         List<Product> result = productService.searchProducts("Test", null);
 
         assertEquals(1, result.size());
         verify(productMapper).selectList(any(LambdaQueryWrapper.class));
+    }
+
+    @Test
+    void searchProductsShouldPreferElasticsearch() {
+        when(productSearchService.search("Test", null)).thenReturn(Optional.of(List.of(testProduct)));
+
+        List<Product> result = productService.searchProducts("Test", null);
+
+        assertEquals(1, result.size());
+        verify(productMapper, never()).selectList(any(LambdaQueryWrapper.class));
     }
 }

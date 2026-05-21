@@ -28,12 +28,12 @@ public class OrderService {
 
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
-    private final OrderEventPublisher orderEventPublisher;
+    private final OrderOutboxService orderOutboxService;
 
-    public OrderService(OrderMapper orderMapper, OrderItemMapper orderItemMapper, OrderEventPublisher orderEventPublisher) {
+    public OrderService(OrderMapper orderMapper, OrderItemMapper orderItemMapper, OrderOutboxService orderOutboxService) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
-        this.orderEventPublisher = orderEventPublisher;
+        this.orderOutboxService = orderOutboxService;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -68,7 +68,7 @@ public class OrderService {
         }
 
         OrderDTO orderDTO = toDTO(order, orderItems);
-        orderEventPublisher.publishOrderCreated(orderDTO);
+        orderOutboxService.saveOrderCreatedEvent(orderDTO);
         return orderDTO;
     }
 
