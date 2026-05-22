@@ -7,9 +7,17 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.List;
 
+/**
+ * 分布式锁核心服务组件
+ * 采用 Redis + Lua 脚本实现高可靠的分布式互斥锁，保障交易链路的绝对安全。
+ */
 @Service
 public class DistributedLockService {
 
+    // 提前预编译 Lua 脚本，提升执行效率
+    // 逻辑：严格核对 Token 指纹，匹配则删除锁，不匹配则拒绝删除。
+    // 架构意义：利用 Redis 单线程执行 Lua 脚本的特性，将 "Get -> Compare -> Delete"
+    // 三个步骤打包为一个绝对原子的操作，彻底杜绝极端并发下的 Check-then-Act 误删漏洞。
     private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>(
             "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
             Long.class
@@ -42,8 +50,18 @@ public class DistributedLockService {
         return Boolean.TRUE.equals(locked);
     }
 
+    /**
+     * 安全释放分布式锁
+     *
+     * @param key   锁的唯一标识 (e.g., checkout:lock:101)
+     * @param token 获取锁时存入的唯一身份指纹 (UUID)
+     * @return true: 释放成功（确认为本人且未过期）；false: 释放失败（锁已过期或被他人持有）
+     */
     public boolean releaseLock(String key, String token) {
+        // 通过 execute 执行 Lua 脚本，KEYS 对应 List，ARGV 对应后面的可变参数
         Long released = redisTemplate.execute(RELEASE_LOCK_SCRIPT, List.of(key), token);
+
+        // 严谨的包装类判空防御
         return released != null && released > 0;
     }
 }

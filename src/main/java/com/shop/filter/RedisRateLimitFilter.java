@@ -1,4 +1,4 @@
-package com.shop.config;
+package com.shop.filter;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;

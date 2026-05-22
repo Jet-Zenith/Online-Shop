@@ -1,6 +1,7 @@
 package com.shop.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.shop.dto.OrderDTO;
 import com.shop.dto.OrderItemDTO;
@@ -45,10 +46,12 @@ public class OrderService {
             throw BusinessException.badRequest("Cart is empty, cannot create order");
         }
 
+        // 1. 将购物车明细转换为订单明细快照，价格、商品名在此刻固化，避免后续商品改价影响历史订单。
         List<OrderItem> orderItems = cartItems.stream()
                 .map(this::toOrderItem)
                 .toList();
 
+        // 2. 基于快照汇总订单金额与数量，确保主订单和明细使用同一份计算来源。
         BigDecimal totalAmount = orderItems.stream()
                 .map(OrderItem::getSubtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -65,11 +68,17 @@ public class OrderService {
                 .build();
         orderMapper.insert(order);
 
-        for (OrderItem item : orderItems) {
+        // 3. 批量写入订单明细，避免按商品数量逐条 insert 形成写入型 N+1 数据库黑洞。
+        orderItems.forEach(item -> {
+            item.setId(IdWorker.getIdStr());
             item.setOrderId(order.getId());
-            orderItemMapper.insert(item);
+        });
+        int insertedItems = orderItemMapper.insertBatch(orderItems);
+        if (insertedItems != orderItems.size()) {
+            throw new BusinessException(500, "Failed to persist all order items");
         }
 
+        // 4. 在同一事务内写入 Transactional Outbox，保证“订单落库”和“事件待投递”原子一致。
         OrderDTO orderDTO = toDTO(order, orderItems);
         orderOutboxService.saveOrderCreatedEvent(orderDTO);
         return orderDTO;

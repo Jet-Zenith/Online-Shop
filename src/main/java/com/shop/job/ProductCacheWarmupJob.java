@@ -1,4 +1,4 @@
-package com.shop.config;
+package com.shop.job;
 
 import com.shop.service.ProductService;
 import lombok.extern.slf4j.Slf4j;

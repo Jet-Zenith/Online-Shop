@@ -1,4 +1,4 @@
-package com.shop.config;
+package com.shop.resolver;
 
 import com.shop.common.CurrentUser;
 import com.shop.common.BaseContext;

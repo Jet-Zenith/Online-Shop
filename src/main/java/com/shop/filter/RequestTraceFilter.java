@@ -1,4 +1,4 @@
-package com.shop.config;
+package com.shop.filter;
 
 import com.shop.common.BaseContext;
 import com.shop.common.RequestContext;

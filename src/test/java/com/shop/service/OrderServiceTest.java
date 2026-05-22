@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
@@ -55,6 +56,7 @@ class OrderServiceTest {
             order.setId("order_001");
             return 1;
         }).when(orderMapper).insert(any(ShopOrder.class));
+        when(orderItemMapper.insertBatch(any())).thenReturn(1);
 
         OrderDTO result = orderService.createOrder("user_001", List.of(cartItem));
 
@@ -63,11 +65,14 @@ class OrderServiceTest {
         assertEquals(2, result.getTotalQuantity());
         assertEquals(1, result.getItems().size());
 
-        ArgumentCaptor<OrderItem> itemCaptor = ArgumentCaptor.forClass(OrderItem.class);
-        verify(orderItemMapper).insert(itemCaptor.capture());
-        assertEquals("order_001", itemCaptor.getValue().getOrderId());
-        assertEquals("Redis Mug", itemCaptor.getValue().getProductName());
-        assertEquals(new BigDecimal("39.90"), itemCaptor.getValue().getUnitPrice());
+        ArgumentCaptor<List<OrderItem>> itemCaptor = ArgumentCaptor.forClass(List.class);
+        verify(orderItemMapper).insertBatch(itemCaptor.capture());
+        verify(orderItemMapper, never()).insert(any(OrderItem.class));
+        assertEquals(1, itemCaptor.getValue().size());
+        assertEquals("order_001", itemCaptor.getValue().get(0).getOrderId());
+        assertEquals("Redis Mug", itemCaptor.getValue().get(0).getProductName());
+        assertEquals(new BigDecimal("39.90"), itemCaptor.getValue().get(0).getUnitPrice());
+        assertNotNull(itemCaptor.getValue().get(0).getId());
         assertNotNull(result.getOrderNo());
         verify(orderOutboxService).saveOrderCreatedEvent(result);
     }
