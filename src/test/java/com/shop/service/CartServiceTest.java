@@ -150,9 +150,25 @@ class CartServiceTest {
     }
 
     @Test
+    void checkoutShouldStopWhenBeginFindsCompletedOrder() {
+        OrderDTO completedOrder = OrderDTO.builder().id("order_001").orderNo("SO001").build();
+        when(checkoutIdempotencyService.isEnabled("idem-001")).thenReturn(true);
+        when(checkoutIdempotencyService.findCompleted("user_001", "idem-001")).thenReturn(Optional.empty());
+        when(checkoutIdempotencyService.begin("user_001", "idem-001")).thenReturn(Optional.of(completedOrder));
+
+        OrderDTO result = cartService.checkout("user_001", "idem-001");
+
+        assertEquals("order_001", result.getId());
+        verify(distributedLockService, never()).tryLock(anyString(), anyString(), any(Duration.class));
+        verify(productService, never()).deductStock(anyString(), anyInt());
+        verify(orderService, never()).createOrder(anyString(), anyList());
+    }
+
+    @Test
     void checkoutShouldCompleteIdempotencyRecordAfterSuccess() {
         when(checkoutIdempotencyService.isEnabled("idem-001")).thenReturn(true);
         when(checkoutIdempotencyService.findCompleted("user_001", "idem-001")).thenReturn(Optional.empty());
+        when(checkoutIdempotencyService.begin("user_001", "idem-001")).thenReturn(Optional.empty());
         when(distributedLockService.tryLock(eq("lock:checkout:user_001"), anyString(), any(Duration.class))).thenReturn(true);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         Cart cart = new Cart("user_001");

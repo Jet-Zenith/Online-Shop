@@ -68,10 +68,20 @@ public class CartController {
         return Result.success(cartService.getCart(user.getId()));
     }
 
+    /**
+     * 购物车结算下单（整个系统并发与安全的最高危接口）
+     *
+     * @param user           当前登录用户（由全局拦截器自动注入）
+     * @param idempotencyKey 幂等性防重令牌。
+     * 由前端在进入结算页时生成并放入 Header。
+     * 核心目的：防止因网络超时重试、用户疯狂连点导致的“重复扣款、重复下单”灾难。
+     * @return 订单详情 DTO
+     */
     @PostMapping("/checkout")
     public Result<OrderDTO> checkout(
             @CurrentUser User user,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        // 将真正的硬核逻辑（防重校验、库存扣减、分布式事务）全部下沉到 Service 层
         return Result.success(cartService.checkout(user.getId(), idempotencyKey));
     }
 }

@@ -139,38 +139,60 @@ public class CartService {
         return checkout(userId, null);
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    /**
+     * 购物车结算下单
+     * 融合了分布式锁、幂等性校验与声明式事务，确保高并发下的绝对数据安全与防超卖。
+     *
+     * @param userId         当前下单用户
+     * @param idempotencyKey 幂等性防重令牌（由前端生成，防止网络重试/连点）
+     * @return 创建成功的订单明细
+     */
+    @Transactional(rollbackFor = Exception.class)// 保证整个下单过程的原子性，任何异常全部回滚
     public OrderDTO checkout(String userId, String idempotencyKey) {
+        // 1. 【防重防线】检查是否启用了幂等性保护
         boolean idempotent = checkoutIdempotencyService.isEnabled(idempotencyKey);
         if (idempotent) {
+            // 尝试去 Redis 中查找该令牌是否已经有对应的成功订单
             OrderDTO completedOrder = checkoutIdempotencyService.findCompleted(userId, idempotencyKey).orElse(null);
             if (completedOrder != null) {
-                return completedOrder;
+                return completedOrder;// 命中幂等，直接返回历史结果，截断业务
             }
-            checkoutIdempotencyService.begin(userId, idempotencyKey);
+            // 未命中，在 Redis 中将该令牌标记为“处理中 (IN_PROGRESS)”
+            completedOrder = checkoutIdempotencyService.begin(userId, idempotencyKey).orElse(null);
+            if (completedOrder != null) {
+                return completedOrder;// 二次确认命中幂等，阻断 findCompleted 与 begin 之间的并发穿透
+            }
         }
 
+        // 2. 构建用户级别的分布式锁
         String lockKey = CHECKOUT_LOCK_KEY_PREFIX + userId;
+        // 生成全局唯一的锁标识，用于后续释放锁时核对身份，防止误删他人的锁
         String lockToken = UUID.randomUUID().toString();
+        // 尝试获取分布式锁（非阻塞，拿不到直接抛异常返回）
         if (!distributedLockService.tryLock(lockKey, lockToken, CHECKOUT_LOCK_TTL)) {
             if (idempotent) {
-                checkoutIdempotencyService.clear(userId, idempotencyKey);
+                checkoutIdempotencyService.clear(userId, idempotencyKey);// 拿锁失败，清理占用的幂等状态
             }
-            throw new IllegalStateException("Checkout is already in progress");
+            throw new IllegalStateException("Checkout is already in progress");// 友好的并发拦截提示
         }
 
         try {
+            // 3. 【核心业务】执行真正的落库与扣减逻辑
             OrderDTO orderDTO = doCheckout(userId);
+
+            // 4. 下单成功，将订单结果与幂等令牌绑定，存入 Redis
             if (idempotent) {
                 checkoutIdempotencyService.complete(userId, idempotencyKey, orderDTO);
             }
             return orderDTO;
         } catch (Exception e) {
+            // 5. 异常兜底：业务失败，必须清理幂等状态，允许用户重试
             if (idempotent) {
                 checkoutIdempotencyService.clear(userId, idempotencyKey);
             }
-            throw e;
+            throw e;// 继续向上抛出异常，触发 Spring 的 @Transactional 回滚机制
         } finally {
+            // 6. 终极清理：无论成功失败，确保分布式锁被安全释放
             distributedLockService.releaseLock(lockKey, lockToken);
         }
     }
