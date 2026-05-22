@@ -3,13 +3,16 @@ package com.shop.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.shop.exception.BusinessException;
 import com.shop.mapper.ProductMapper;
+import com.shop.dto.StockDeductionRequest;
 import com.shop.model.Product;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -175,6 +178,39 @@ public class ProductService {
             }
         }
         return deducted;
+    }
+
+    public boolean batchDeductStock(List<StockDeductionRequest> deductions) {
+        if (deductions == null || deductions.isEmpty()) {
+            throw BusinessException.badRequest("Stock deduction request is required");
+        }
+
+        Map<String, Integer> quantityByProductId = new LinkedHashMap<>();
+        for (StockDeductionRequest deduction : deductions) {
+            if (deduction == null || StringUtils.isBlank(deduction.getProductId()) || deduction.getQuantity() <= 0) {
+                throw BusinessException.badRequest("Invalid stock deduction request");
+            }
+            quantityByProductId.merge(deduction.getProductId(), deduction.getQuantity(), Integer::sum);
+        }
+
+        List<StockDeductionRequest> normalizedDeductions = quantityByProductId.entrySet().stream()
+                .map(entry -> new StockDeductionRequest(entry.getKey(), entry.getValue()))
+                .toList();
+
+        int affectedRows = productMapper.batchDeductStock(normalizedDeductions);
+        if (affectedRows != normalizedDeductions.size()) {
+            return false;
+        }
+
+        List<String> productIds = normalizedDeductions.stream()
+                .map(StockDeductionRequest::getProductId)
+                .toList();
+        productIds.forEach(productId -> redisTemplate.delete(PRODUCT_KEY_PREFIX + productId));
+        evictListCaches();
+
+        List<Product> updatedProducts = productMapper.selectBatchIds(productIds);
+        productSearchService.rebuildIndex(updatedProducts);
+        return true;
     }
 
     void evictListCaches() {

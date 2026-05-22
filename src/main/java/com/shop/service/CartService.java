@@ -3,12 +3,15 @@ package com.shop.service;
 import com.shop.exception.InsufficientStockException;
 import com.shop.exception.ProductNotFoundException;
 import com.shop.dto.OrderDTO;
+import com.shop.dto.StockDeductionRequest;
 import com.shop.model.Cart;
 import com.shop.model.CartItem;
 import com.shop.model.Product;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -197,33 +200,73 @@ public class CartService {
         }
     }
 
+    /**
+     * 执行核心结算逻辑（负责购物车处理、库存扣减与订单生成）
+     *
+     * @param userId 结算用户 ID
+     * @return 生成的最终订单对象
+     */
     private OrderDTO doCheckout(String userId) {
         Cart cart = getCart(userId);
         if (cart.getItems().isEmpty()) {
             throw new IllegalStateException("Cart is empty, cannot checkout.");
         }
 
+        // 1. 生成内存级快照，防止后续并发修改导致 ConcurrentModificationException
         List<CartItem> itemsSnapshot = new ArrayList<>(cart.getItems());
 
-        // Clear cart from Redis first — if this fails, we abort before touching stock
+        // 2. 核心架构设计：Fail-Fast 与乐观前置
+        // 优先清空 Redis 购物车。若 Redis 异常，可直接阻断流程，保护下游 MySQL 数据库免受无效连接冲击。
         clearCart(userId);
 
         try {
-            for (CartItem item : itemsSnapshot) {
-                boolean success = productService.deductStock(item.getProduct().getId(), item.getQuantity());
-                if (!success) {
-                    throw new InsufficientStockException(
-                            "Product " + item.getProduct().getName() + " is out of stock");
-                }
-                inventoryAlertService.checkLowStock(item.getProduct().getId());
+            // 3. 批量扣减库存
+            List<StockDeductionRequest> stockDeductions = itemsSnapshot.stream()
+                    .map(item -> new StockDeductionRequest(item.getProduct().getId(), item.getQuantity()))
+                    .toList();
+            boolean stockDeducted = productService.batchDeductStock(stockDeductions);
+            if (!stockDeducted) {
+                // 库存不足抛出异常，将触发外层 @Transactional 执行 MySQL 回滚，恢复已扣减的其他商品库存
+                throw new InsufficientStockException("Some products are out of stock");
             }
-            return orderService.createOrder(userId, itemsSnapshot);
+
+            // 4. 所有商品扣库存成功，落盘创建订单
+            OrderDTO orderDTO = orderService.createOrder(userId, itemsSnapshot);
+
+            // 当前已改为事务提交后触发，避免扣库存或创建订单回滚后，已发出的低库存告警无法撤销。
+            registerLowStockChecksAfterCommit(itemsSnapshot);
+            return orderDTO;
+
         } catch (Exception e) {
-            // Restore cart to Redis on failure
+            // 5. 极端场景的手动补偿机制 (Manual Compensation)
+            // 当底层数据库事务回滚时，Redis 不会自动回滚，必须利用内存快照手动将商品重新装回购物车。
             cart.setItems(itemsSnapshot);
             saveCartToRedis(CART_KEY_PREFIX + userId, cart);
+
+            // 继续向上抛出异常，确保外层声明式事务正确捕获并执行 MySQL 事务回滚
             throw e;
         }
+    }
+
+    private void registerLowStockChecksAfterCommit(List<CartItem> itemsSnapshot) {
+        Runnable lowStockCheck = () -> itemsSnapshot.stream()
+                .map(CartItem::getProduct)
+                .filter(product -> product != null && product.getId() != null)
+                .map(Product::getId)
+                .distinct()
+                .forEach(inventoryAlertService::checkLowStock);
+
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            lowStockCheck.run();
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                lowStockCheck.run();
+            }
+        });
     }
 
     private void saveCartToRedis(String key, Cart cart) {

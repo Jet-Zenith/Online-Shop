@@ -2,6 +2,7 @@ package com.shop.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.shop.dto.StockDeductionRequest;
 import com.shop.mapper.ProductMapper;
 import com.shop.model.Product;
 import org.junit.jupiter.api.Test;
@@ -146,6 +147,37 @@ class ProductServiceTest {
         boolean result = productService.deductStock("prod_001", 999);
 
         assertFalse(result);
+    }
+
+    @Test
+    void batchDeductStockShouldDeductAndRefreshProductCaches() {
+        when(productMapper.batchDeductStock(anyList())).thenReturn(2);
+        when(productMapper.selectBatchIds(anyList())).thenReturn(List.of(testProduct));
+
+        boolean result = productService.batchDeductStock(List.of(
+                new StockDeductionRequest("prod_001", 2),
+                new StockDeductionRequest("prod_002", 1)));
+
+        assertTrue(result);
+        verify(productMapper).batchDeductStock(anyList());
+        verify(redisTemplate).delete("product:prod_001");
+        verify(redisTemplate).delete("product:prod_002");
+        verify(redisTemplate).delete("all:products");
+        verify(redisTemplate).delete("hot:products");
+        verify(productSearchService).rebuildIndex(List.of(testProduct));
+    }
+
+    @Test
+    void batchDeductStockShouldReturnFalseWhenAnyProductStockIsInsufficient() {
+        when(productMapper.batchDeductStock(anyList())).thenReturn(1);
+
+        boolean result = productService.batchDeductStock(List.of(
+                new StockDeductionRequest("prod_001", 2),
+                new StockDeductionRequest("prod_002", 1)));
+
+        assertFalse(result);
+        verify(productMapper, never()).selectBatchIds(anyList());
+        verify(productSearchService, never()).rebuildIndex(anyList());
     }
 
     @Test

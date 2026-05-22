@@ -64,14 +64,14 @@ class CartServiceTest {
         Cart cart = new Cart("user_001");
         cart.addItem(testProduct, 2);
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
-        when(productService.deductStock("prod_001", 2)).thenReturn(true);
+        when(productService.batchDeductStock(anyList())).thenReturn(true);
         OrderDTO order = OrderDTO.builder().id("order_001").orderNo("SO001").build();
         when(orderService.createOrder(eq("user_001"), anyList())).thenReturn(order);
 
         OrderDTO result = cartService.checkout("user_001");
 
         assertEquals("order_001", result.getId());
-        verify(productService).deductStock("prod_001", 2);
+        verify(productService).batchDeductStock(anyList());
         verify(orderService).createOrder(eq("user_001"), anyList());
         verify(inventoryAlertService).checkLowStock("prod_001");
         verify(distributedLockService).releaseLock(eq("lock:checkout:user_001"), anyString());
@@ -92,9 +92,24 @@ class CartServiceTest {
         Cart cart = new Cart("user_001");
         cart.addItem(testProduct, 5);
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
-        when(productService.deductStock("prod_001", 5)).thenReturn(false);
+        when(productService.batchDeductStock(anyList())).thenReturn(false);
 
         assertThrows(InsufficientStockException.class, () -> cartService.checkout("user_001"));
+    }
+
+    @Test
+    void checkoutShouldNotSendLowStockAlertWhenBatchStockDeductionFails() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(distributedLockService.tryLock(eq("lock:checkout:user_001"), anyString(), any(Duration.class))).thenReturn(true);
+        Cart cart = new Cart("user_001");
+        cart.addItem(testProduct, 5);
+        when(valueOperations.get("cart:user_001")).thenReturn(cart);
+        when(productService.batchDeductStock(anyList())).thenReturn(false);
+
+        assertThrows(InsufficientStockException.class, () -> cartService.checkout("user_001"));
+
+        verify(inventoryAlertService, never()).checkLowStock(anyString());
+        verify(orderService, never()).createOrder(anyString(), anyList());
     }
 
     @Test
@@ -113,9 +128,7 @@ class CartServiceTest {
         cart.addItem(productB, 1);
 
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
-        when(productService.deductStock("prod_001", 2)).thenReturn(true);
-        when(productService.deductStock("prod_002", 1))
-                .thenThrow(new InsufficientStockException("Product B out of stock"));
+        when(productService.batchDeductStock(anyList())).thenReturn(false);
 
         assertThrows(InsufficientStockException.class, () -> cartService.checkout("user_001"));
 
@@ -146,7 +159,7 @@ class CartServiceTest {
 
         assertEquals("order_001", result.getId());
         verify(distributedLockService, never()).tryLock(anyString(), anyString(), any(Duration.class));
-        verify(productService, never()).deductStock(anyString(), anyInt());
+        verify(productService, never()).batchDeductStock(anyList());
     }
 
     @Test
@@ -160,7 +173,7 @@ class CartServiceTest {
 
         assertEquals("order_001", result.getId());
         verify(distributedLockService, never()).tryLock(anyString(), anyString(), any(Duration.class));
-        verify(productService, never()).deductStock(anyString(), anyInt());
+        verify(productService, never()).batchDeductStock(anyList());
         verify(orderService, never()).createOrder(anyString(), anyList());
     }
 
@@ -174,7 +187,7 @@ class CartServiceTest {
         Cart cart = new Cart("user_001");
         cart.addItem(testProduct, 1);
         when(valueOperations.get("cart:user_001")).thenReturn(cart);
-        when(productService.deductStock("prod_001", 1)).thenReturn(true);
+        when(productService.batchDeductStock(anyList())).thenReturn(true);
         OrderDTO order = OrderDTO.builder().id("order_001").orderNo("SO001").build();
         when(orderService.createOrder(eq("user_001"), anyList())).thenReturn(order);
 

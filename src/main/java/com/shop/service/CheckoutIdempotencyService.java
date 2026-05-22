@@ -80,11 +80,7 @@ public class CheckoutIdempotencyService {
         Object value = redisTemplate.opsForValue().get(key);
 
         // 3. 【⚠️ 生产级并发 Bug 预警】
-        // 如果查出来是 OrderDTO，说明有极端的并发线程抢先完成了订单（比如当前线程之前被 JVM 停顿了）。
-        // 现存代码：直接 return，会导致外层继续执行 doCheckout，引发重复下单！
-        // 修复策略：绝对不能 return void 放行。这里直接返回历史订单，由外层立刻截断下单链路。
         if (value instanceof OrderDTO orderDTO) {
-            // FIXME: 此处曾存在并发穿透漏洞，必须返回历史订单给外层，不能放行到 doCheckout。
             return Optional.of(orderDTO);
         }
 
