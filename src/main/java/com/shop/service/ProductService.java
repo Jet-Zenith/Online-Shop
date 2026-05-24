@@ -130,24 +130,44 @@ public class ProductService {
         return hotProducts;
     }
 
+    /**
+     * 搜索商品列表
+     * <p>
+     * 查询策略：优先使用 Elasticsearch 做全文检索；如果 ES 未启用、查询异常或不适合处理当前条件，
+     * 则自动降级为 MySQL 查询，保证搜索功能具备可用性兜底。
+     *
+     * @param keyword  搜索关键字，可匹配商品名称和描述
+     * @param category 商品分类，可用于精确过滤
+     * @return 匹配条件的商品列表
+     */
     public List<Product> searchProducts(String keyword, String category) {
+        // 1. 优先走 Elasticsearch。
+        // ES 更适合全文检索：商品名称、描述可以被分词并按相关性排序，搜索体验比 MySQL LIKE 更好。
         List<Product> elasticsearchResult = productSearchService.search(keyword, category).orElse(null);
         if (elasticsearchResult != null) {
+            // 2. 只要 ES 正常返回结果，就直接使用 ES 查询结果。
+            // 注意：空列表也是有效结果，表示 ES 查过但没有匹配商品，不需要再回退 MySQL。
             return elasticsearchResult;
         }
 
+        // 3. 如果 ES 未启用、查询条件不适合走 ES，或 ES 查询异常，则降级走 MySQL。
+        // 这保证搜索功能不会因为搜索引擎故障而整体不可用。
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
 
         if (StringUtils.isNotBlank(keyword)) {
+            // 4. MySQL 兜底方案：用 LIKE 匹配商品名称和描述。
+            // 数据量大时性能不如 ES，但可作为可靠降级路径。
             wrapper.and(i -> i.like(Product::getName, keyword)
                     .or()
                     .like(Product::getDescription, keyword));
         }
 
         if (StringUtils.isNotBlank(category)) {
+            // 5. 分类属于结构化字段，MySQL 中用等值匹配即可。
             wrapper.eq(Product::getCategory, category);
         }
 
+        // 6. 返回 MySQL 兜底查询结果。
         return productMapper.selectList(wrapper);
     }
 

@@ -19,20 +19,20 @@ import java.math.BigDecimal;
 public class ProductSearchDocument {
 
     @Id
-    private String id;
+    private String id; // ES 文档 ID，和商品表 product.id 保持一致
 
     @Field(type = FieldType.Text, analyzer = "standard")
-    private String name;
+    private String name; // 商品名称，用于全文检索
 
     @Field(type = FieldType.Text, analyzer = "standard")
-    private String description;
+    private String description; // 商品描述，用于全文检索
 
     @Field(type = FieldType.Double)
-    private BigDecimal price;
+    private BigDecimal price; // 商品价格，用于展示、筛选或排序
 
     @Field(type = FieldType.Integer)
-    private Integer stock;
+    private Integer stock; // 商品库存，用于展示或过滤无库存商品
 
     @Field(type = FieldType.Keyword)
-    private String category;
+    private String category; // 商品分类，Keyword 类型适合精确过滤
 }
