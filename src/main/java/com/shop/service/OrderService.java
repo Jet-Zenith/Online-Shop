@@ -40,6 +40,23 @@ public class OrderService {
         this.orderOutboxService = orderOutboxService;
     }
 
+    /**
+     * 核心交易链路：创建订单并落库
+     * <p>
+     * 架构意图与核心设计：
+     * 1. 【数据快照】：将购物车明细转换为订单明细，在此刻彻底固化商品名称和交易价格，
+     * 防止后续商家改名或调价影响已成交的历史订单。
+     * 2. 【财务精度】：采用 BigDecimal 进行总金额汇总，严格杜绝浮点数计算导致的财务精度丢失。
+     * 3. 【性能极化】：彻底摒弃单条循环写入，采用手动预分配 ID (IdWorker) 配合 insertBatch
+     * 实现批量 Bulk Insert，根除 N+1 数据库网络瓶颈，极大提升大促期间的并发吞吐量。
+     * 4. 【最终一致性】：采用“本地消息表 (Transactional Outbox Pattern)”模式，
+     * 将订单数据与“订单已创建”事件在同一个本地 MySQL 事务中强一致性落盘，彻底解决微服务场景下的消息丢失难题。
+     *
+     * @param userId    当前结算下单的用户 ID
+     * @param cartItems 已通过前置校验（如库存扣减成功）的购物车明细快照
+     * @return OrderDTO 组装完毕并成功落盘的订单视图对象
+     * @throws BusinessException 当购物车为空，或批量写入明细出现静默失败时抛出，触发外层强事务回滚
+     */
     @Transactional(rollbackFor = Exception.class)
     public OrderDTO createOrder(String userId, List<CartItem> cartItems) {
         if (cartItems == null || cartItems.isEmpty()) {
@@ -85,7 +102,7 @@ public class OrderService {
     }
 
     /**
-     * 获取当前登录用户的订单列表（分页查询）- 已彻底解决 N+1 性能陷阱
+     * 获取当前登录用户的订单列表
      *
      * @param userId   当前登录用户ID
      * @param pageNum  页码
@@ -161,16 +178,35 @@ public class OrderService {
                 .collect(Collectors.groupingBy(OrderItem::getOrderId));
     }
 
+    /**
+     * 将购物车明细转换为订单明细
+     * <p>
+     * 架构意图与业务价值：
+     * 1. 【防御性编程】：严格拦截无效的商品信息和非法购买数量（如零元购、负数刷单）。
+     * 2. 【数据快照】：将此时此刻的商品名称 (ProductName) 和单价 (UnitPrice)
+     * 物理拷贝并硬入库到订单明细中。彻底切断与动态商品库的关联，防止未来商家改名、调价导致的历史订单凭证被篡改和财务对账失败。
+     * 3. 【财务精度】：采用 BigDecimal 进行小计乘法运算，确保财务数据零误差。
+     *
+     * @param cartItem 购物车中的单条商品记录
+     * @return 固化了价格和名称的订单明细实体
+     * @throws BusinessException 当商品信息缺失或购买数量非法时抛出
+     */
     private OrderItem toOrderItem(CartItem cartItem) {
         Product product = cartItem.getProduct();
+
+        // Fail-Fast：严防脏数据和恶意篡改
         if (product == null || product.getPrice() == null || cartItem.getQuantity() <= 0) {
             throw BusinessException.badRequest("Invalid cart item");
         }
+
+        // 财务级高精度计算：单价 × 数量
         BigDecimal subtotal = product.getPrice().multiply(BigDecimal.valueOf(cartItem.getQuantity()));
+
+        // 构建订单明细快照
         return OrderItem.builder()
                 .productId(product.getId())
-                .productName(product.getName())
-                .unitPrice(product.getPrice())
+                .productName(product.getName()) // 固化购买时的商品名
+                .unitPrice(product.getPrice())  // 固化购买时的真实单价
                 .quantity(cartItem.getQuantity())
                 .subtotal(subtotal)
                 .build();

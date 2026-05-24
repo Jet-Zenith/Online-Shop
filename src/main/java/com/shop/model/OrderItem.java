@@ -16,17 +16,20 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 @Builder
 @TableName("order_item")
+/**
+ * 订单明细实体，保存订单中每个商品的价格快照和购买数量。
+ */
 public class OrderItem implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
     @TableId(type = IdType.ASSIGN_ID)
-    private String id;
+    private String id;// 订单明细主键 ID
 
-    private String orderId;
-    private String productId;
-    private String productName;
-    private BigDecimal unitPrice;
-    private Integer quantity;
-    private BigDecimal subtotal;
+    private String orderId;// 所属订单 ID，对应 shop_order.id
+    private String productId;// 商品 ID，对应 product.id
+    private String productName;// 下单时的商品名称快照，防止商品改名影响历史订单展示
+    private BigDecimal unitPrice;// 下单时的商品单价快照，防止后续改价影响历史订单金额
+    private Integer quantity;// 购买数量
+    private BigDecimal subtotal;// 当前明细小计，通常为 unitPrice * quantity
 }

@@ -16,20 +16,26 @@ import java.util.List;
 @AllArgsConstructor
 @Builder
 @JsonIgnoreProperties(ignoreUnknown = true)
+/**
+ * 购物车缓存模型，主要存储在 Redis 中，不直接对应数据库表。
+ */
 public class Cart implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    private String userId;
+    private String userId;// 购物车所属用户 ID。
 
     @Builder.Default
-    private List<CartItem> items = new ArrayList<>();
+    private List<CartItem> items = new ArrayList<>();// 购物车商品项列表。
 
     public Cart(String userId) {
         this.userId = userId;
         this.items = new ArrayList<>();
     }
 
+    /**
+     * 动态计算购物车总价，不单独存储，避免和明细金额不一致。
+     */
     public BigDecimal getTotalPrice() {
         if (items == null || items.isEmpty()) {
             return BigDecimal.ZERO;

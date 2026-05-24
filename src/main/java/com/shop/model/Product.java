@@ -19,28 +19,30 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 @TableName("product")
+/**
+ * 商品表实体，承载商品展示、库存扣减和搜索索引同步所需的数据。
+ */
 public class Product implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
     @TableId(type = IdType.ASSIGN_ID)
-    private String id;
-
-    private String name;
-    private String description;
-    private BigDecimal price;
-    private int stock;
-    private String category;
-
-    @TableField(fill = FieldFill.INSERT)
-    private LocalDateTime createTime;
-
-    @TableField(fill = FieldFill.INSERT_UPDATE)
-    private LocalDateTime updateTime;
+    private String id;// 商品主键 ID
+    private String name;// 商品名称
+    private String description;// 商品描述
+    private BigDecimal price;// 商品当前销售价格
+    private int stock;// 当前可售库存数量
+    private String category;// 商品分类，用于筛选和搜索
 
     @TableField(fill = FieldFill.INSERT)
-    private String createUser;
+    private LocalDateTime createTime;// 创建时间，由 MyBatis-Plus 自动填充
 
     @TableField(fill = FieldFill.INSERT_UPDATE)
-    private String updateUser;
+    private LocalDateTime updateTime;// 最近更新时间，由 MyBatis-Plus 自动填充
+
+    @TableField(fill = FieldFill.INSERT)
+    private String createUser;// 创建人 ID
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private String updateUser;// 最近更新人 ID
 }
