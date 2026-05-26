@@ -52,7 +52,6 @@ public class OrderOutboxService {
      * 共享同一个底层数据库连接。同生共死，从物理层面根除分布式系统中的“双写不一致”问题。
      * 3. 【可追踪与幂等】：统一注入 traceId 保证全链路可观测；生成唯一 eventId 供下游微服务做重复消费拦截。
      * <p>
-     * 新手理解要点：
      * - 这里不是马上把消息发给 RocketMQ，而是先把“待发送的事件”写入 event_outbox 表。
      * - 因为它和订单创建共用同一个数据库事务，所以不会出现“订单成功了，但消息没保存下来”的断层。
      * - 后面的 relayPendingEvents 定时任务会扫描 PENDING 事件，再可靠投递到 RocketMQ/Redis Stream。
@@ -134,6 +133,15 @@ public class OrderOutboxService {
         }
     }
 
+    /**
+     * 投递单条 Outbox 事件，并根据投递结果更新事件状态。
+     * <p>
+     * 这是 Transactional Outbox 的单条消息处理核心：
+     * 先把 outbox.payload 反序列化成领域事件，再交给 OrderEventPublisher 投递到 RocketMQ/Redis Stream；
+     * 成功则标记 SENT，失败则记录错误和重试次数，超过阈值后标记 FAILED。
+     *
+     * @param outbox 从 event_outbox 表中扫描出来的待投递事件记录
+     */
     private void relay(EventOutbox outbox) {
         try {
             // 1. Outbox 表中存的是 JSON 字符串，这里先还原成真正的领域事件对象。

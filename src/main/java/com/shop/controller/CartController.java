@@ -69,7 +69,7 @@ public class CartController {
     }
 
     /**
-     * 购物车结算下单（整个系统并发与安全的最高危接口）
+     * 购物车结算下单
      *
      * @param user           当前登录用户（由全局拦截器自动注入）
      * @param idempotencyKey 幂等性防重令牌。

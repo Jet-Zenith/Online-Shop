@@ -10,12 +10,12 @@ import java.util.List;
 @Data
 @Builder
 public class OrderDTO {
-    private String id;
-    private String orderNo;
-    private String userId;
-    private BigDecimal totalAmount;
-    private Integer totalQuantity;
-    private String status;
-    private LocalDateTime createTime;
-    private List<OrderItemDTO> items;
+    private String id;// 订单主键 ID
+    private String orderNo;// 业务订单号
+    private String userId;// 下单用户 ID
+    private BigDecimal totalAmount;// 订单总金额
+    private Integer totalQuantity;// 订单商品总件数
+    private String status;//订单状态
+    private LocalDateTime createTime;//创建时间
+    private List<OrderItemDTO> items;//订单明细实体
 }

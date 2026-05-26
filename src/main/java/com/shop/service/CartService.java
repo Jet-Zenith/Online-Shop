@@ -152,7 +152,7 @@ public class CartService {
      */
     @Transactional(rollbackFor = Exception.class)// 保证整个下单过程的原子性，任何异常全部回滚
     public OrderDTO checkout(String userId, String idempotencyKey) {
-        // 1. 【防重防线】检查是否启用了幂等性保护
+        // 1. 检查是否启用了幂等性保护
         boolean idempotent = checkoutIdempotencyService.isEnabled(idempotencyKey);
         if (idempotent) {
             // 尝试去 Redis 中查找该令牌是否已经有对应的成功订单
@@ -238,7 +238,7 @@ public class CartService {
             return orderDTO;
 
         } catch (Exception e) {
-            // 5. 极端场景的手动补偿机制 (Manual Compensation)
+            // 5. 极端场景的手动补偿机制
             // 当底层数据库事务回滚时，Redis 不会自动回滚，必须利用内存快照手动将商品重新装回购物车。
             cart.setItems(itemsSnapshot);
             saveCartToRedis(CART_KEY_PREFIX + userId, cart);
@@ -248,19 +248,31 @@ public class CartService {
         }
     }
 
+    /**
+     * 注册低库存检查任务，并尽量延迟到数据库事务提交后执行。
+     * <p>
+     * 低库存检查可能会触发日志、告警、消息通知等外部副作用；
+     * 如果放在事务内部执行，后续订单创建失败导致事务回滚时，已经发出去的告警无法自动撤销。
+     *
+     * @param itemsSnapshot 本次结算的购物车商品快照
+     */
     private void registerLowStockChecksAfterCommit(List<CartItem> itemsSnapshot) {
+        // 1. 它不是马上执行，而是先定义一个“待会儿要执行的任务”。
         Runnable lowStockCheck = () -> itemsSnapshot.stream()
-                .map(CartItem::getProduct)
-                .filter(product -> product != null && product.getId() != null)
-                .map(Product::getId)
-                .distinct()
-                .forEach(inventoryAlertService::checkLowStock);
+                .map(CartItem::getProduct)//从购物车快照里取商品
+                .filter(product -> product != null && product.getId() != null)//过滤掉空商品
+                .map(Product::getId)//取商品 ID
+                .distinct()//去重
+                .forEach(inventoryAlertService::checkLowStock);//逐个调用 inventoryAlertService.checkLowStock(productId)
 
+        // 2. 如果当前没有 Spring 事务，那就没必要等事务提交，直接执行低库存检查。
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             lowStockCheck.run();
             return;
         }
 
+        // 3. 当前存在事务时，注册 afterCommit 回调。
+        // 只有订单和库存扣减真正提交成功后，才执行低库存检查，避免回滚后误告警。
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {

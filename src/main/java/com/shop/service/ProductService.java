@@ -200,11 +200,25 @@ public class ProductService {
         return deducted;
     }
 
+    /**
+     * 批量扣减商品库存。
+     * <p>
+     * 该方法用于购物车结算场景：一次订单可能包含多个商品，如果逐个调用 deductStock，
+     * 会产生多次数据库往返；这里先合并同一商品的扣减数量，再通过 Mapper 执行批量条件更新。
+     * <p>
+     * 返回 false 表示至少有一个商品库存不足，调用方应终止结算并触发事务回滚。
+     *
+     * @param deductions 待扣减的商品库存请求列表
+     * @return true 表示所有商品库存扣减成功；false 表示存在库存不足或未成功更新的商品
+     */
     public boolean batchDeductStock(List<StockDeductionRequest> deductions) {
+        // 1. 请求不能为空，空扣减没有业务意义。
         if (deductions == null || deductions.isEmpty()) {
             throw BusinessException.badRequest("Stock deduction request is required");
         }
 
+        // 2. 合并同一商品的扣减数量。
+        // 例如购物车中因异常数据出现两条 prod_001，数量 1 和 2，会合并成 prod_001 -> 3。
         Map<String, Integer> quantityByProductId = new LinkedHashMap<>();
         for (StockDeductionRequest deduction : deductions) {
             if (deduction == null || StringUtils.isBlank(deduction.getProductId()) || deduction.getQuantity() <= 0) {
@@ -213,21 +227,26 @@ public class ProductService {
             quantityByProductId.merge(deduction.getProductId(), deduction.getQuantity(), Integer::sum);
         }
 
+        // 3. 将合并后的 Map 重新转换成批量扣减请求列表，交给 Mapper 拼接批量 SQL。
         List<StockDeductionRequest> normalizedDeductions = quantityByProductId.entrySet().stream()
                 .map(entry -> new StockDeductionRequest(entry.getKey(), entry.getValue()))
                 .toList();
 
+        // 4. 执行批量条件扣减。底层 SQL 会带 stock >= quantity 条件，防止库存被扣成负数。
         int affectedRows = productMapper.batchDeductStock(normalizedDeductions);
         if (affectedRows != normalizedDeductions.size()) {
+            // 影响行数少于商品数，说明至少一个商品库存不足或商品不存在，整体结算应失败。
             return false;
         }
 
+        // 5. 扣减成功后清理商品相关缓存，避免后续读到旧库存。
         List<String> productIds = normalizedDeductions.stream()
                 .map(StockDeductionRequest::getProductId)
                 .toList();
         productIds.forEach(productId -> redisTemplate.delete(PRODUCT_KEY_PREFIX + productId));
         evictListCaches();
 
+        // 6. 查询最新商品数据并重建 ES 索引，使搜索结果中的库存尽量保持同步。
         List<Product> updatedProducts = productMapper.selectBatchIds(productIds);
         productSearchService.rebuildIndex(updatedProducts);
         return true;

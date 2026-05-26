@@ -24,7 +24,7 @@ public class CheckoutIdempotencyService {
 
     /**
      * 判断当前请求是否启用幂等性保护机制
-     * 架构意图与工程价值：
+     *
      * 1. 兼容降级开关：允许未携带防重 Header 的老版本前端正常下单（不阻断业务），实现新老系统平滑过渡。
      * 2. 遵循开闭原则 (OCP)：将校验逻辑抽离为独立方法统一收口。未来若需增加黑白名单、正则校验或特定 VIP 规则，
      * 只需在此处扩展，绝不侵入并污染极度脆弱的 checkout 核心交易链路。
@@ -38,7 +38,7 @@ public class CheckoutIdempotencyService {
     }
 
     /**
-     * 根据防重令牌，去 Redis 中查询是否已经存在处理成功的历史订单
+     * 根据防重令牌去 Redis 中查询是否已经存在处理成功的历史订单
      *
      * @param userId         当前下单用户 ID
      * @param idempotencyKey 前端传入的防重令牌
@@ -48,8 +48,10 @@ public class CheckoutIdempotencyService {
         // 1. 根据约定的前缀和 token 组装 Redis Key 并获取值
         Object value = redisTemplate.opsForValue().get(buildKey(userId, idempotencyKey));
 
-        // 2. 核心防御：模式匹配 (Pattern Matching)
+        // 2. 核心防御：模式匹配
         // 自动完成判空 (null 拦截) + 类型匹配 (排除 "处理中" 等非实体状态) + 变量强转赋值
+            // 1-判断 value 是不是 OrderDTO
+            // 2-如果是自动把它强转成 OrderDTO，并赋值给变量 orderDTO
         if (value instanceof OrderDTO orderDTO) {
             return Optional.of(orderDTO); // 命中已完成订单，安全返回
         }
@@ -69,7 +71,7 @@ public class CheckoutIdempotencyService {
     public Optional<OrderDTO> begin(String userId, String idempotencyKey) {
         String key = buildKey(userId, idempotencyKey);
 
-        // 1. 【核心防御】原子操作 SETNX (Set if Not eXists)
+        // 1. 【核心防御】原子操作 SETNX (Set if Not eXists --> setIfAbsent)
         // 尝试将 Key 设置为 PROCESSING。如果成功，说明当前线程是全网第一个拿到该令牌的，安全放行。
         Boolean created = redisTemplate.opsForValue().setIfAbsent(key, PROCESSING, TTL);
         if (Boolean.TRUE.equals(created)) {
@@ -79,7 +81,7 @@ public class CheckoutIdempotencyService {
         // 2. 如果 SETNX 失败，说明 Key 已经存在。接下来查明原因：
         Object value = redisTemplate.opsForValue().get(key);
 
-        // 3. 【⚠️ 生产级并发 Bug 预警】
+        // 3. 并发完成兜底：返回历史订单，阻断重复下单
         if (value instanceof OrderDTO orderDTO) {
             return Optional.of(orderDTO);
         }
@@ -92,10 +94,21 @@ public class CheckoutIdempotencyService {
         redisTemplate.opsForValue().set(buildKey(userId, idempotencyKey), orderDTO, TTL);
     }
 
+    /**
+     * 清理幂等状态
+     * @param userId         用户ID
+     * @param idempotencyKey 防重令牌
+     */
     public void clear(String userId, String idempotencyKey) {
         redisTemplate.delete(buildKey(userId, idempotencyKey));
     }
 
+    /**
+     * 构建Key
+     * @param userId         用户ID
+     * @param idempotencyKey 防重令牌
+     * @return 构建出的Key：idempotency:checkout:userId:防重令牌
+     */
     private String buildKey(String userId, String idempotencyKey) {
         return KEY_PREFIX + userId + ":" + idempotencyKey;
     }

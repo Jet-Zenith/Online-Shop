@@ -33,6 +33,16 @@ public class RocketMqOrderEventConsumer implements RocketMQListener<OrderCreated
      */
     @Override
     public void onMessage(OrderCreatedEvent event) {
+        /*
+        目前 onMessage 只是打印日志，证明订单事件已经被 RocketMQ 消费到了。
+        在真实业务里，这里通常会扩展成：
+            给用户发下单成功通知
+            增加用户积分
+            触发优惠券核销
+            推送订单到履约系统
+            写订单统计数据
+            通知仓储系统准备发货
+        */
         // 消费者侧也打印 eventId/orderNo，方便和 Outbox 表、RocketMQ 控制台、服务日志做链路排查。
         log.info("Consumed RocketMQ order event eventId={}, orderNo={}, userId={}, amount={}",
                 event.getEventId(), event.getOrderNo(), event.getUserId(), event.getTotalAmount());
